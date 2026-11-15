@@ -629,7 +629,7 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 
 ## ADR-10: Source control workflow
 
-**Decision.** This is a solo exercise, so no feature/bugfix/hotfix branches. The work was done on a `dev` branch with small commits (one logical step each, only when build and tests pass) using `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`), then a reduced copy, `lean`, was squashed into `main`. The repository now has one branch, `main`: the `dev` and `lean` branches were removed from `origin`, and the full implementation is not part of it.
+**Decision.** This is a solo exercise, so no feature/bugfix/hotfix branches: work on `main` in small commits (one logical step each, only when build and tests pass) using `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`).
 
 **Why.** Feature branches add ceremony without safety benefit for one person; small commits give the same ability to roll back. Squashing gives the reviewer a tidy result.
 
