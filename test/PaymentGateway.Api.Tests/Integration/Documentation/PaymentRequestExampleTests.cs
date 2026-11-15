@@ -1,3 +1,4 @@
+#if DEBUG
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -10,7 +11,8 @@ namespace PaymentGateway.Api.Tests.Integration.Documentation;
 /// Scalar's "Test request" panel is pre-filled from an example, so the example must be a payment the API accepts as it stands
 /// (a reviewer should be able to press Send) and must stay valid as the calendar moves on. The sample values belong to the
 /// Scalar interface, not to the API: they live in a second OpenAPI document that only the Scalar page reads, and the API's
-/// own document (<c>/openapi/v1.json</c>) carries none.
+/// own document (<c>/openapi/v1.json</c>) carries none. Like the development token, they exist in Debug builds only: this
+/// whole file is excluded from a Release build, where <c>ApiDocumentationTests</c> checks that none are served.
 /// </summary>
 public class PaymentRequestExampleTests : IClassFixture<PaymentsApiFactory>
 {
@@ -25,22 +27,9 @@ public class PaymentRequestExampleTests : IClassFixture<PaymentsApiFactory>
     private async Task<JsonObject> ExampleAsync()
     {
         var document = await _factory.CreateClient().GetStringAsync("/openapi/scalar.json", TestContext.Current.CancellationToken);
-        var example = JsonNode.Parse(document)!["components"]!["schemas"]!["PostPaymentRequest"]!["example"];
+        var example = JsonNode.Parse(document)!["components"]!["schemas"]!["PostPaymentRequest"]!["examples"]![0];
 
         return example!.AsObject();
-    }
-
-    [Fact]
-    public async Task ApiDocument_PostPaymentRequestSchema_CarriesNoSampleValues()
-    {
-        // Arrange: done in the constructor
-
-        // Act
-        var document = await _factory.CreateClient().GetStringAsync("/openapi/v1.json", TestContext.Current.CancellationToken);
-        var schema = JsonNode.Parse(document)!["components"]!["schemas"]!["PostPaymentRequest"]!.AsObject();
-
-        // Assert
-        schema.ContainsKey("example").Should().BeFalse("the sample values are a Scalar convenience, not part of the API's contract");
     }
 
     [Fact]
@@ -94,3 +83,4 @@ public class PaymentRequestExampleTests : IClassFixture<PaymentsApiFactory>
         example["expiryYear"]!.GetValue<int>().Should().BeGreaterThan(DateTime.UtcNow.Year);
     }
 }
+#endif

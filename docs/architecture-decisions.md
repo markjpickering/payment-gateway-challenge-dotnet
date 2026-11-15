@@ -94,7 +94,7 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 
 **Follow-up.** Declare the bearer security scheme in the OpenAPI document so Scalar can accept a token (see ADR-7); update `launchUrl` in `launchSettings.json`.
 
-**Sample values belong to Scalar, not to the API.** The "Test request" panel is pre-filled with a valid payment, but the API's own document (`/openapi/v1.json`) carries no examples: a second document, `scalar`, adds them (`PaymentRequestExampleTransformer`) and only the Scalar page reads it (`WithOpenApiRoutePattern`). *Why:* the OpenAPI document is the API's published contract, and sample card numbers are a convenience of one UI, not part of it. Tests pin both halves.
+**Sample values belong to Scalar, not to the API.** The "Test request" panel is pre-filled with a valid payment, but the API's own document (`/openapi/v1.json`) carries no examples: a second document, `scalar`, adds them (`PaymentRequestExampleTransformer`) and only the Scalar page reads it (`WithOpenApiRoutePattern`). **Debug builds only (`#if DEBUG`), like the development token (ADR-7):** a Release build has neither the second document nor the transformer, and Scalar reads the plain `v1` document. *Why:* the OpenAPI document is the API's published contract, and sample card numbers are a convenience of one UI, not part of it. Tests pin both halves.
 
 ---
 

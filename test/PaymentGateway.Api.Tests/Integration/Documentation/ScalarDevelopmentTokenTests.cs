@@ -42,19 +42,19 @@ public class ScalarDevelopmentTokenTests : IClassFixture<WebApplicationFactory<P
     }
 
     [Fact]
-    public void DevelopmentScalarToken_IsCompiledIntoDebugBuildsOnly()
+    public void ScalarTestingAids_AreCompiledIntoDebugBuildsOnly()
     {
         // Arrange
-        const string typeName = "PaymentGateway.Api.Documentation.DevelopmentScalarToken";
+        string[] types = ["PaymentGateway.Api.Documentation.DevelopmentScalarToken", "PaymentGateway.Api.Documentation.PaymentRequestExampleTransformer"];
 
         // Act
-        var exists = typeof(Program).Assembly.GetType(typeName) is not null;
+        var existing = types.Where(name => typeof(Program).Assembly.GetType(name) is not null);
 
         // Assert
 #if DEBUG
-        exists.Should().BeTrue();
+        existing.Should().BeEquivalentTo(types);
 #else
-        exists.Should().BeFalse("the token code must not exist in a Release build");
+        existing.Should().BeEmpty("the development token and the sample request values must not exist in a Release build");
 #endif
     }
 }

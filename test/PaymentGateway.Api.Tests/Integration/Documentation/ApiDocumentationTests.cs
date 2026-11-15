@@ -45,6 +45,38 @@ public class ApiDocumentationTests : IClassFixture<WebApplicationFactory<Program
     }
 
     [Fact]
+    public async Task ApiDocument_PostPaymentRequestSchema_CarriesNoSampleValues()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+
+        // Act
+        var document = await client.GetStringAsync("/openapi/v1.json", TestContext.Current.CancellationToken);
+        var schema = JsonNode.Parse(document)!["components"]!["schemas"]!["PostPaymentRequest"]!.AsObject();
+
+        // Assert
+        schema.ContainsKey("example").Should().BeFalse("sample values are a Scalar convenience, not part of the API's contract");
+        schema.ContainsKey("examples").Should().BeFalse();
+    }
+
+#if !DEBUG
+    [Fact]
+    public async Task ScalarSampleDocument_InAReleaseBuild_DoesNotExist()
+    {
+        // Arrange
+        var client = _factory.CreateClient();
+
+        // Act
+        var sampleDocument = await client.GetAsync("/openapi/scalar.json", TestContext.Current.CancellationToken);
+        var page = await client.GetStringAsync("/scalar/v1", TestContext.Current.CancellationToken);
+
+        // Assert
+        sampleDocument.StatusCode.Should().Be(HttpStatusCode.NotFound, "sample request values are compiled into Debug builds only");
+        page.Should().Contain("openapi/v1.json").And.NotContain("scalar.json");
+    }
+#endif
+
+    [Fact]
     public async Task ScalarUi_InDevelopment_IsServed()
     {
         // Arrange

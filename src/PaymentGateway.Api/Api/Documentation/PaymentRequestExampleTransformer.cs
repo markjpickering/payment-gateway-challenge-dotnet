@@ -1,3 +1,4 @@
+#if DEBUG
 using System.Text.Json.Nodes;
 
 using Microsoft.AspNetCore.OpenApi;
@@ -9,7 +10,9 @@ namespace PaymentGateway.Api.Documentation;
 
 /// <summary>
 /// Gives the payment request an example that is a valid payment, so Scalar's "Test request" panel is pre-filled and Send works
-/// as it stands. The expiry is a few years ahead of the clock, so the example does not go stale.
+/// as it stands. The expiry is a few years ahead of the clock, so the example does not go stale. FOR EASE OF TESTING ONLY:
+/// like <see cref="DevelopmentScalarToken"/> it is compiled into Debug builds only (<c>#if DEBUG</c>), so a Release build
+/// serves no sample request values.
 /// </summary>
 public sealed class PaymentRequestExampleTransformer(TimeProvider clock) : IOpenApiSchemaTransformer
 {
@@ -19,7 +22,7 @@ public sealed class PaymentRequestExampleTransformer(TimeProvider clock) : IOpen
     {
         if (context.JsonTypeInfo.Type == typeof(PostPaymentRequest))
         {
-            schema.Example = new JsonObject
+            schema.Examples = [new JsonObject
             {
                 ["cardNumber"] = "2222405343248877", // ends in an odd digit: the bank simulator authorizes it
                 ["expiryMonth"] = 4,
@@ -27,9 +30,10 @@ public sealed class PaymentRequestExampleTransformer(TimeProvider clock) : IOpen
                 ["currency"] = "GBP",
                 ["amount"] = 100,
                 ["cvv"] = "123"
-            };
+            }];
         }
 
         return Task.CompletedTask;
     }
 }
+#endif
