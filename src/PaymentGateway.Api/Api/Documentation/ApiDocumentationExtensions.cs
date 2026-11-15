@@ -35,7 +35,14 @@ public static class ApiDocumentationExtensions
         }
 
         app.MapOpenApi().AllowAnonymous();
-        app.MapScalarApiReference(options => options.WithOpenApiRoutePattern($"/openapi/{ScalarDocument}.json")).AllowAnonymous();
+        app.MapScalarApiReference(options =>
+        {
+            options.WithOpenApiRoutePattern($"/openapi/{ScalarDocument}.json");
+#if DEBUG
+            // For ease of testing only: a Debug build, in Development, pre-loads the page with a token. Not in Release.
+            DevelopmentScalarToken.Prefill(options, app.Configuration, app.Services.GetRequiredService<TimeProvider>());
+#endif
+        }).AllowAnonymous();
 
         return app;
     }

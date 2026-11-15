@@ -32,7 +32,7 @@ curl -k https://localhost:7092/api/payments/<id> -H "Authorization: Bearer $TOKE
 ```
 
 A card number ending in an odd digit is `Authorized`, an even digit `Declined`, and `0` makes the bank answer `503` (we return `502`).
-In the Scalar UI click **Authorize** and paste the token; the `POST` request body is pre-filled with a valid payment, so just press Send. Variants: `pwsh scripts/dev-token.ps1 -Merchant merchant-2` (another
+In the Scalar UI the token is **already filled in** when you have run a token command once (a Debug build in Development does this for ease of testing only; a Release build or a deployed service never issues a token), and the `POST` request body is pre-filled with a valid payment, so just press Send. If **Authorize** is empty, paste the token. Variants: `pwsh scripts/dev-token.ps1 -Merchant merchant-2` (another
 merchant, so `404` on the first one's payments) and `-Scopes payments:read` (so `403` on `POST`).
 
 Run the tests with `dotnet test` (no Docker or token needed: the bank is substituted and the tests sign their own tokens).
