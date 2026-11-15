@@ -9,8 +9,17 @@ challenge on .NET 10 (ASP.NET Core Minimal APIs).
 
 ## Take it for a spin
 
-**Every payment endpoint needs a bearer token, so get one first** (there is deliberately no switch to turn authentication off).
-The full walkthrough, with expected results and troubleshooting, is in **[docs/testing-guide.md](docs/testing-guide.md)**.
+**Every payment endpoint needs a bearer token** (there is deliberately no switch to turn authentication off), so there is one
+command that does everything: it starts the bank simulator (if Docker is installed), makes a token, **copies it to your clipboard**,
+runs the API and opens the docs. Ctrl+C stops it.
+
+```bash
+pwsh scripts/start.ps1                  # then, in the Scalar UI that opens, click Authorize and paste (Ctrl+V)
+pwsh scripts/start.ps1 -TokenOnly       # or just make a token and print a curl example
+```
+
+In Visual Studio, pick the **Get dev token** profile in the run dropdown and press Ctrl+F5 to get the same token without leaving the IDE.
+Full walkthrough, expected results and troubleshooting: **[docs/testing-guide.md](docs/testing-guide.md)**. Or step by step:
 
 ```bash
 docker-compose up -d                                # 1. bank simulator on :8080 (optional: without it a valid payment gives 502)

@@ -5,6 +5,24 @@ off, on purpose (see [Authentication](../README.md#authentication)). Everything 
 
 **You need:** the .NET 10 SDK, and Docker only if you want the real bank simulator.
 
+## The one-command way
+
+```bash
+pwsh scripts/start.ps1
+```
+
+It starts the bank simulator if Docker is installed (and warns if not), makes a development token, **copies it to your
+clipboard**, prints a ready-to-paste `curl` example and runs the API; Ctrl+C stops it. In the Scalar UI that opens, click
+**Authorize** and paste. Options: `-TokenOnly` (just the token and the example, no server), `-Merchant merchant-2`,
+`-Scopes payments:read`, `-NoBrowser`.
+
+**In Visual Studio:** choose the **Get dev token** profile in the run dropdown (next to the green Start button) and press
+**Ctrl+F5**. A console shows and copies the token; switch back to the normal profile to run the API. (Visual Studio has no
+supported way to add a right-click command from a repository, so this is a run profile in `launchSettings.json`.) If you prefer a
+menu entry, **Tools > External Tools > Add**: command `pwsh`, arguments `-NoProfile -File "$(SolutionDir)scripts\start.ps1" -TokenOnly -Pause`.
+
+The rest of this guide is the same thing step by step.
+
 ## 1. Start the bank simulator (optional)
 
 ```bash

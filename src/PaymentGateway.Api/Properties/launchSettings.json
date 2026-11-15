@@ -26,6 +26,12 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
+    },
+    "Get dev token": {
+      "commandName": "Executable",
+      "executablePath": "pwsh",
+      "commandLineArgs": "-NoProfile -File ..\\..\\scripts\\start.ps1 -TokenOnly -Pause",
+      "workingDirectory": "$(ProjectDir)"
     }
   }
 }
