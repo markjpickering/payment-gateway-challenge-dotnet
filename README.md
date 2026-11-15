@@ -18,7 +18,7 @@ pwsh scripts/start.ps1                  # then, in the Scalar UI that opens, cli
 pwsh scripts/start.ps1 -TokenOnly       # or just make a token and print a curl example
 ```
 
-In Visual Studio, pick the **Get dev token** profile in the run dropdown and press Ctrl+F5 to get the same token without leaving the IDE.
+In Visual Studio, pick the **Get dev token** profile in the run dropdown and press Ctrl+F5: it makes a token, copies it to your clipboard and prints it (and the next steps) in a console window; then switch back to the `PaymentGateway.Api` profile, press F5 and paste the token into Scalar's Authorize box.
 Full walkthrough, expected results and troubleshooting: **[docs/testing-guide.md](docs/testing-guide.md)**. Or step by step:
 
 ```bash

@@ -17,9 +17,13 @@ clipboard**, prints a ready-to-paste `curl` example and runs the API; Ctrl+C sto
 `-Scopes payments:read`, `-NoBrowser`.
 
 **In Visual Studio:** choose the **Get dev token** profile in the run dropdown (next to the green Start button) and press
-**Ctrl+F5**. A console shows and copies the token; switch back to the normal profile to run the API. (Visual Studio has no
-supported way to add a right-click command from a repository, so this is a run profile in `launchSettings.json`.) If you prefer a
-menu entry, **Tools > External Tools > Add**: command `pwsh`, arguments `-NoProfile -File "$(SolutionDir)scripts\start.ps1" -TokenOnly -Pause`.
+**Ctrl+F5**. It does **not** start the API; it only makes a token, and a console window explains what to do next:
+- **The token is on your clipboard** (just press Ctrl+V), and is also printed at the bottom of the console window if you need to copy it by hand. It lasts about 3 months.
+- Press Enter to close the window, switch the dropdown back to `PaymentGateway.Api` and press F5. The Scalar page opens: click **Authorize** and paste.
+- A `401` later means the token has expired: run the profile again.
+
+Visual Studio has no supported way to add a right-click command from a repository, so this is a run profile in `launchSettings.json`.
+If you prefer a menu entry, **Tools > External Tools > Add**: command `pwsh`, arguments `-NoProfile -File "$(SolutionDir)scripts\start.ps1" -TokenOnly -Pause`.
 
 The rest of this guide is the same thing step by step.
 

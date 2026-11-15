@@ -46,8 +46,18 @@ try {
     "  Scalar UI: $baseUrl/scalar/v1  (click Authorize and paste the token)"
     ''
 
-    if ($TokenOnly) { $token; return }
+    if ($TokenOnly) {
+        'YOUR TOKEN is below, and is already on your clipboard (press Ctrl+V to paste it). It lasts about 3 months.'
+        'This only made a token; it did not start the API. Next:'
+        '  1. Start the API: in Visual Studio pick the PaymentGateway.Api profile and press F5, or run: dotnet run --project src/PaymentGateway.Api'
+        '  2. In the Scalar page that opens, click Authorize and paste the token (or send it as: Authorization: Bearer <token>).'
+        '  3. Send a POST /api/payments (see the curl example above). A 401 later means the token has expired: run this again.'
+        ''
+        $token
+        return
+    }
 
+    'Starting the API. Your token is on your clipboard: when the Scalar page opens, click Authorize and press Ctrl+V. Ctrl+C here stops the API.'
     if (-not $NoBrowser) { Start-Job { Start-Sleep 6; Start-Process "$using:baseUrl/scalar/v1" } | Out-Null }
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
     if ($https) { dotnet run --project $project }
