@@ -4,6 +4,8 @@ Decisions made while planning the Payment Gateway challenge, with the reasoning 
 
 **Start here.** Most of the file is reference. The decisions that shape the code a reviewer reads are: ADR-1 (keep it simple, project layout), ADR-8 (validation), ADR-9 (the bank), ADR-17 (errors as values, no exceptions for flow control), ADR-26 (DTOs and entities are separate; storage holds no logic) and ADR-27 (the five layers and naming). ADR-7 is authentication. ADR-15, 21, 22 and 23 (metrics, idempotency, audit, reversals) describe the concerns that are placeholders on this branch. The rest is testing, tooling and conventions.
 
+**How this file is organised.** The decisions are grouped by theme, in the same order as [`architecture-summary.md`](architecture-summary.md) (a one-page digest of this file). Numbers are the order in which the decisions were made and are kept stable, because the code, the tests and `CLAUDE.md` refer to them, so within a theme they are not in numeric order.
+
 ## Guiding principle: KISS
 
 The brief asks for code that is "simple and maintainable. We do not want to encourage over-engineering" and an architecture "focused on meeting the functional requirements". The brief's functional scope is two endpoints (create a payment, retrieve a payment), validation, one call to a bank simulator and in-memory storage; the requirements for authentication, metrics, idempotency, auditing and reversals (ADR-7, 15, 21, 22, 23) are deliberate additions to it. Where another principle (SOLID, clean architecture, patterns) would add layers or dependencies, KISS wins.
@@ -19,6 +21,8 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 *Why.* These are the team's stated working principles; recording them here keeps `CLAUDE.md` short while preserving the reasons, and the KISS ordering says which wins when they conflict.
 
 ---
+
+# The shape of the solution
 
 ## ADR-1: Single API project, layered by folder (no Clean Architecture, CQRS or Mediator)
 
@@ -92,91 +96,7 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 
 ---
 
-## ADR-6: xUnit v3 with AwesomeAssertions
-
-**Decision.** Test with xUnit v3 (`xunit.v3` 4.x) and AwesomeAssertions (`.Should()` syntax). Do not use FluentAssertions.
-
-**xUnit v3 on Microsoft Testing Platform (MTP).** Migrated from xUnit 2.9.3 so that the project follows its own rule of using the latest stable dependencies (ADR-4), while the test code was still small (no `IAsyncLifetime`, `Xunit.Abstractions` or `async void` to change). Consequences, all verified by running the suite:
-- The test project is an executable (`<OutputType>Exe</OutputType>`), as xUnit v3 requires. The runner packages `Microsoft.NET.Test.Sdk` and `xunit.runner.visualstudio` stay in place, as the xUnit documentation recommends for compatibility.
-- `xunit.v3` 4.x uses MTP v2, and the VSTest target is no longer supported, so a root `global.json` with `{ "test": { "runner": "Microsoft.Testing.Platform" } }` turns on MTP mode for `dotnet test` on the .NET 10 SDK. `dotnet test`, `dotnet test PaymentGateway.sln` and `dotnet test --solution PaymentGateway.sln` all work. Without that file `dotnet test` fails. The repository already needs the .NET 10 SDK to build (ADR-4), so this adds no new requirement for a reviewer.
-- MTP changes the filter options: VSTest's `--filter` is replaced by switches such as `--filter-namespace "PaymentGateway.Api.Tests.Unit.*"` and `--filter-not-trait "Category=Simulator"`.
-- `coverlet.collector` does not work under MTP, so it is replaced by `Microsoft.Testing.Extensions.CodeCoverage`: `dotnet test --coverage --coverage-output-format cobertura` writes to `TestResults/` (git-ignored).
-- The xUnit1051 analyzer requires every awaited call that accepts a `CancellationToken` to be given `TestContext.Current.CancellationToken`, so tests use that instead of `CancellationToken.None` (ADR-16). Only tests of cancellation itself use their own source.
-- Alternative considered: staying on xUnit 2.9.3 (zero change, but the previous line, so it would have needed a documented exception to ADR-4), or xUnit v3 3.x (keeps VSTest and Coverlet, but is not the latest stable).
-
-**Why.**
-- FluentAssertions v8+ requires a paid licence for commercial use; a candidate submission depending on a paid library invites an avoidable question.
-- AwesomeAssertions is the community fork of FluentAssertions 7 (Apache 2.0), keeps the familiar `.Should()` syntax and is close to a drop-in replacement.
-
-**Rejected.**
-- *Shouldly* – free and the most popular alternative, but a different syntax; the difference is mostly taste.
-- *Plain xUnit `Assert`* – no extra dependency and adequate for simple tests; AwesomeAssertions was preferred for readability.
-- *FluentAssertions 7.x pinned* – free, but no longer the maintained line.
-
-**Tests against the real simulator.** In addition to the stubbed-bank tests, a small set of tests call the real Mountebank simulator, tagged `[Trait("Category", "Simulator")]` and skipped when it is unreachable. *Why:* a stubbed `IBankClient` only proves our code against our own assumptions about the bank. The real simulator proves the actual contract: snake_case fields, `MM/YYYY` expiry, odd/even/zero card-number behaviour, and the 503 path. *Why optional and tagged:* they need Docker, so they must not make the normal `dotnet test` fail on a machine without it, and a reviewer can still run them with one command.
-
-**Integration tests are a requirement, not an extra.** Every endpoint has integration tests that go through the whole pipeline with `WebApplicationFactory`, a stubbed bank client and test tokens, and they run in a plain `dotnet test` with no Docker. Minimum scenarios:
-- POST: authorized (card ends in an odd digit), declined (even digit), and rejected for each class of invalid input plus malformed JSON, asserting the bank was not called and nothing was stored.
-- POST when the bank fails (503 or timeout): an error response, and nothing stored.
-- GET: an existing payment (a POST-then-GET round trip returns the same data) and an unknown id (404).
-- Authentication: 401 with no or an invalid token and 403 with the wrong scope, on both endpoints.
-- Security: no response body contains the full card number or CVV.
-- Ownership, idempotency, reversals and audit: the required scenarios are listed in ADR-7, ADR-21, ADR-23 and ADR-22 respectively, and are part of the minimum suite.
-
-*Why.* Unit tests prove the pieces; only an integration test proves the wiring, JSON binding and mapping (including snake_case/camelCase and the `Rejected` behaviour for malformed input), authentication and authorisation policies, validation, and the HTTP status mapping working together, which is where most real defects in an API like this appear. The brief expects automated tests and leaves the type to us; for a two-endpoint service an end-to-end suite through the real pipeline gives the most confidence per test. Keeping them Docker-free (stubbed bank) makes them deterministic and runnable by any reviewer; contract checks against the real simulator are the separate, tagged `Simulator` tests.
-
-**Unit and integration tests are kept apart by directory.** Both live in the single test project (ADR-1), under separate top-level folders:
-- `Unit/` mirrors the implementation's directory structure. The tests for `BusinessLogic/Services/PaymentService.cs` are in `Unit/Services/PaymentServiceTests.cs`, for `Validation/…` in `Unit/Validation/`, and so on: one test class per class under test, named `[ClassUnderTest]Tests`.
-- `Integration/` is organised by feature/endpoint (`Integration/Payments/…`), with the real-simulator tests in `Integration/Simulator/`. It does not mirror implementation classes, because an integration test exercises many of them at once.
-- `TestSupport/` holds shared helpers (test-token factory, the web application factory setup). Namespaces follow folders.
-
-*Why.* The two kinds of test have different speed, dependencies and purpose, so people (and CI) should be able to run and read them separately, e.g. `dotnet test --filter-namespace "PaymentGateway.Api.Tests.Unit.*"` (MTP syntax, ADR-6). Mirroring the source tree for unit tests makes a test trivially findable from the class it covers (and shows at a glance which classes lack tests), while integration tests are about behaviour across the pipeline, so organising them by feature matches how they are described and reviewed. Keeping a class's tests out of integration folders also stops unit tests quietly growing a `WebApplicationFactory` dependency.
-
-**Mocking: NSubstitute by default; a hand-written test double only when mocking would be unduly complex.** Any collaborator may be substituted with `Substitute.For<T>()` when that makes a unit test clearer; there is deliberately no rule restricting mocking to the system's edges. Examples in use: `IBankClient` in both unit and integration tests, and `IPaymentsRepository` in the unit tests of its consumers (for example `PaymentService`, where "nothing is stored when the request is invalid or the bank fails" is itself a requirement checked as an interaction). The clock is Microsoft's `FakeTimeProvider` (a test double from a package, not hand-written).
-
-*Why.* The brief's key rule, "an invalid request never reaches the bank", is an interaction, and a mock states it in one line (`bank.DidNotReceive().SendAsync(...)`) where a hand-written fake would need its own call counter. Scripting outcomes (authorized, declined, 503, timeout) is a one-liner per test with a substitute but a growing class with a fake, and one technique across unit and integration tests means a single thing to learn and no test-only classes to maintain. NSubstitute was chosen over Moq and FakeItEasy for its minimal syntax (the substitute is called as if it were the real object), active maintenance, permissive licence (BSD-3) and because Moq's 2023 SponsorLink episode makes some teams wary of it. *The exception.* The default is a mocking framework, but readability is the test: where mocking would cause undue complexity (for example an elaborate multi-step setup, callbacks, or state that a mock expresses awkwardly) and a small hand-written test double is clearly more readable, use the hand-written double. Such a double lives in `TestSupport/` and carries a short comment saying why a mock was not used, so the exception stays visible and deliberate and does not become the norm. *Why allow it:* the aim of a test double is a clear, trustworthy test, not allegiance to a tool; forcing a mock into a case it fits badly produces setup noise that hides what the test is about. *Why not the other way round (fakes by default):* in the common cases here (script an outcome, verify the bank was not called) a mock is shorter and needs no extra classes.
-
-*Guard rail:* verify interactions only where the interaction is the requirement (for example the bank is not called for a rejected payment); otherwise assert on outcomes. *Note.* The integration tests are unaffected: they still override only the bank client, the clock and authentication in `ConfigureTestServices` (ADR-12), because their purpose is to exercise the real wiring.
-
-**Arrange-Act-Assert, with explicit section comments.** Every test follows the Arrange-Act-Assert pattern and marks each section with a comment (`// Arrange`, `// Act`, `// Assert`), in that order and separated by a blank line. There is exactly one Act per test; to cover more inputs use a `[Theory]` rather than several Acts. When a section is empty or done elsewhere the comment stays and says where (for example `// Arrange: done in the constructor`), so the structure is always visible. There are no assertions in Arrange and no setup in Assert.
-
-**Shared setup lives in fixtures or the constructor, not in copies.** Setup that several tests share is abstracted away: cheap per-test setup in the constructor (xUnit creates a new instance for every test) with `IDisposable.Dispose` for teardown, or `IAsyncLifetime` when it is asynchronous; expensive setup shared by the tests of one class (for example a `WebApplicationFactory`) in an `IClassFixture<T>`, and across classes in an `ICollectionFixture<T>`. Fixtures, builders and helpers live in `TestSupport/` (ADR-24). A shared fixture must not hold mutable state that one test can leak into another, which is consistent with ADR-12's fresh-factory-per-class rule.
-
-*Why.* The explicit AAA comments make every test readable the same way: a reader finds what is set up, what is exercised and what is expected without parsing the code, and a test with two Acts or assertions mixed into setup is visible at a glance. A single Act keeps each test about one behaviour, so a failure points at one thing. Pulling shared setup into the constructor or fixtures follows the rule of three (ADR-24), removes copy-paste, and keeps each test short enough to meet the size limits (ADR-18); the per-test instance that xUnit creates gives isolation by default, and class and collection fixtures are reserved for setup that is genuinely expensive. *Trade-off.* A few extra comment lines per test and a little indirection to find shared setup; accepted for uniform structure.
-
-**Test approach.** Unit tests for validators and `PaymentService` (with a substitute `IBankClient`); integration tests through `WebApplicationFactory` with a substituted bank client and test tokens. Test names follow `[Method]_[Scenario]_[ExpectedResult]`.
-
----
-
-## ADR-7: Authentication – JWT bearer with scope policies, dev tokens via `dotnet user-jwts`
-
-**Decision.** Protect the endpoints with `AddJwtBearer`:
-- `Authority` / `Audience` / issuer come from configuration (in production, the identity provider's metadata).
-- One authorisation policy per scope: `payments:create` (POST payment), `payments:read` (GET payment and transactions) and `payments:reverse` (POST reversal, ADR-23). No/invalid token -> 401; insufficient scope -> 403.
-- For development and review, tokens are produced by the .NET SDK tool `dotnet user-jwts create --scope payments:create --scope payments:read --scope payments:reverse` (Development only; the signing key lives in user secrets).
-- Rules: never write custom token-issuing code, no setting that disables authentication, no hard-coded tokens.
-- All endpoints are served over HTTPS (HTTPS redirection and HSTS), so data is encrypted in transit. Nothing sensitive is persisted (only the last four digits are kept, and never the CVV), so there is currently nothing that needs encrypting at rest. To keep the option open, every store (payments, transactions, audit trail, idempotency records) sits behind an interface (ADR-13), so an encrypting implementation (or a decorator) can be substituted without touching callers; a production store must encrypt at rest with separately held keys.
-- Inbound authentication is independent of the bank call: the bank client must never forward the merchant's token.
-
-**Production design (documented, not built).** Server-to-server merchants authenticate with OAuth 2.0 client credentials and short-lived JWTs issued by a dedicated identity provider (Entra ID, Auth0, Keycloak, Duende). Optional mTLS with certificate-bound tokens for high-assurance merchants; API keys only as a lighter sandbox alternative (hashed at rest, scoped, rotatable). Around it: TLS 1.2+, per-merchant authorisation (a merchant may only read its own payments), secrets in a vault, rate limiting, audit logging without PAN/CVV, and no CVV storage.
-
-**Why.**
-- This is a financial system handling sensitive data; real token validation (signature, issuer, audience, expiry) and least-privilege scopes show how it would be done properly.
-- The brief does not require authentication, and a full identity provider would be far more than the exercise needs. `user-jwts` is the compromise: genuine validation in the code, but the reviewer can obtain a token with one command, with no custom issuing code.
-- Hand-rolling a token endpoint would look secure without being secure, and an on/off switch for authentication is the wrong thing to show in this domain.
-
-**Authentication, metrics (ADR-15), idempotency (ADR-21), auditing (ADR-22) and reversals (ADR-23) are the deliberate departures from the brief** (which asks for none of them); everywhere else the brief wins.
-
-**Two identities per request: who originated it, and on whose behalf.** Every authenticated request carries both, taken from the validated token and never from the request body:
-- **Originator (`InitiatedBy`)**: the authenticated principal that made the call: the token's `sub` claim (a human user's id, or a machine client's id).
-- **On behalf of (`OnBehalfOf`, the merchant account)**: the merchant the operation is performed for: the `merchant_id` claim, falling back to the client id when the token has none (a merchant client acting for itself). The two are equal when a merchant calls for itself and differ when someone acts for a merchant (for example a support user or a platform). In production the identity provider issues this delegation (for example OAuth 2.0 token exchange, RFC 8693, whose `act` claim records the actor); the gateway trusts a validated token and does not decide who may act for whom. `dotnet user-jwts` can add the claims for dev tokens (`--claim merchant_id=…`).
-- Both identities are recorded on every audit event (ADR-22) and on every ledger transaction (ADR-23).
-
-**Per-merchant ownership is built (changed from an earlier "known gap").** The `OnBehalfOf` merchant id is stored as `MerchantId` on each payment and transaction, and every endpoint that reads or changes a payment (GET payment, GET transactions, POST reversal) returns 404 for a payment that belongs to another merchant. *Why the change:* reversals (ADR-23) move money, so letting any caller with a scope reverse or read any payment by id (broken object-level authorisation, the top OWASP API risk) is no longer acceptable. Also note that scopes arrive in the space-separated `scope` claim, so the policies need a small custom requirement rather than `RequireClaim`.
-
-**Rejected.** Omitting auth entirely (documented only); a custom dev token endpoint; a disable switch; a static API key in config; a hard-coded token in the README.
-
----
+# Behaviour of the payment flow
 
 ## ADR-8: Validation and error handling
 
@@ -209,121 +129,6 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 - Amounts are integers in minor units.
 
 **Why.** The interface lets the service be tested with a substitute bank; separating a decline (a valid business outcome) from a bank failure (an operational error) avoids telling a merchant a card was declined when the bank was simply unavailable; the card-data rules are compliance requirements (PCI DSS) and the brief.
-
----
-
-## ADR-10: Source control workflow
-
-**Decision.** This is a solo exercise, so no feature/bugfix/hotfix branches. Work on `dev`; `main` stays the clean template. Make small, frequent commits (one logical step each, only when build and tests pass) using `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`). Tag checkpoints (`git tag checkpoint-N`) before risky changes, push `dev` to `origin` periodically as a backup, and squash-merge `dev` into `main` at the end (or keep the history if it tells a clear story; decide then).
-
-**Why.** Feature branches add ceremony without safety benefit for one person; small commits and tags give the same ability to roll back. Squashing gives the reviewer a tidy result.
-
----
-
-## ADR-12: Dependency injection wiring (production and tests)
-
-**Decision (production).**
-- One composition root: `PaymentGatewayDi.cs`, a single static class at the project root, is the only place that knows concrete types (`Program.cs` calls it once). Everything else uses constructor injection of interfaces; no service locator (`IServiceProvider.GetService` in business code) and no static access.
-- Every mapping from an interface to its concrete implementation is registered in a static extension method on `IServiceCollection` (`public static IServiceCollection Add…(this IServiceCollection services, …)`) in that one class, as an internal static method per concern, e.g. `AddPaymentServices()`, `AddBankClient(configuration)`, `AddApiAuthentication()`, which `InitialiseDi(configuration)` (the one public method, first in the class: the root DI initialisation) chains in order (amended 2026-11-16: the `DependencyInjection/` folder of eight small classes became one class, so all the wiring reads top to bottom in one file; the per-concern methods are internal, visible to the test project, so a test can register just the part it needs). There are no inline `services.AddX<I, T>()` calls in `Program.cs`, endpoints or tests: `Program.cs` only calls `InitialiseDi`, so it stays short, there is one place to look up what implements an interface, and tests reuse the same registrations. Each method returns the `IServiceCollection` so calls chain, and takes the configuration only when it needs it.
-- Lifetimes are chosen deliberately: singleton for thread-safe/stateless things (the in-memory repository, `TimeProvider.System`); scoped for per-request state; transient for cheap stateless services (`PaymentService` may be scoped or transient). Never inject a scoped service into a singleton.
-- The bank client is a typed `HttpClient` via `AddHttpClient<IBankClient, BankClient>()`, never `new HttpClient()`; base address and timeout come from configuration.
-- Configuration uses the options pattern (`BankOptions` bound with `ValidateDataAnnotations().ValidateOnStart()`); inject `IOptions<T>`, not `IConfiguration`.
-- Wiring mistakes fail fast: keep `ValidateOnBuild` / `ValidateScopes` enabled (the Development default).
-- Validators are registered by assembly scanning (`AddValidatorsFromAssemblyContaining<…>()`).
-- Every non-trivial class has an interface, and data types without logic do not (ADR-13). Do not wrap `ILogger`, `TimeProvider` or `IOptions` in our own interfaces.
-
-**Decision (tests).**
-- Unit tests do not use the container: construct the class under test directly, with an NSubstitute substitute for `IBankClient`. A test that needs the container is an integration test, or the class has too many dependencies.
-- Integration tests use `WebApplicationFactory<Program>` with the real container and override only the edges in `ConfigureTestServices`: `IBankClient` (an NSubstitute substitute), `TimeProvider` (`FakeTimeProvider`) and authentication (test-signed JWTs or a test authentication handler, so 401/403 are testable). Everything inside the app stays real.
-- Test setup reuses the production extension methods and never re-registers the app's internals by hand.
-- Isolation: a fresh factory (or repository) per test class so singleton state cannot leak; `IClassFixture<T>` to share one factory within a class.
-- `Program` is made visible to tests. `Microsoft.AspNetCore.Mvc.Testing` exposes the internal top-level `Program` to the test assembly automatically (verified when the tests were written); add `public partial class Program;` only if that stops working.
-- Use NSubstitute for test doubles in unit tests, for any collaborator where that makes the test clearer (ADR-6); use a hand-written test double only where mocking would be unduly complex and the double is clearly more readable.
-
-**Why.**
-- A single composition root and constructor injection keep dependencies explicit and the code testable without a framework; a service locator hides them.
-- Static extension methods are the single, discoverable home for interface-to-implementation mappings: when an interface (ADR-13) gains an implementation, the one place to change or look is its `Add…` method, and a missing or duplicate registration shows up in one folder, not scattered across `Program.cs` and test setup. They also keep `Program.cs` readable and give tests one shared definition of the wiring, so the integration tests exercise the real registrations rather than a copy that could drift.
-- Correct lifetimes matter because the repository is shared by concurrent requests (ADR-3) and captive dependencies cause subtle bugs; `ValidateOnBuild`/`ValidateScopes` and `ValidateOnStart` turn those mistakes and bad configuration into startup failures instead of runtime ones.
-- A typed `HttpClient` lets the factory manage handler lifetime and DNS refresh, avoiding socket exhaustion, and is the natural place for the base URL and timeout (ADR-9).
-- Overriding only the edges keeps integration tests meaningful: they prove the real wiring, validators, service and endpoints together, while the substituted bank, fixed clock and test tokens make them deterministic and independent of the network and an identity provider.
-- A mocking framework keeps interaction checks ("the bank was not called") and scripted outcomes to one line each, and one technique serves both unit and integration tests (ADR-6).
-
-**Rejected.** Service locator / static access; `new HttpClient()`; our own wrappers around framework abstractions; hand-written fakes as the default (they are allowed only as the readability exception in ADR-6); building a separate test container; re-registering internals in test setup.
-
----
-
-## ADR-13: Test-driven development, and when a type needs an interface
-
-**Decision.**
-- Anything that contains logic is developed test-first: write a failing test, make it pass, then refactor.
-- A class, record or struct that contains no logic is exempt from TDD: plain data holders such as request/response DTOs, entities, database objects and options classes. We do not write tests that only assert property getters and setters.
-- Every other non-trivial class has an interface, kept in `BusinessLogic/Interfaces/` (services, mappings) or `DataInterface/` (stores, bank, metrics) (ADR-1): `PaymentService`, `BankClient`, `PaymentsRepository`, the validators' abstractions and so on. A DTO, entity or database object with no business logic does not get an interface.
-- The line moves with the code: if a data type later gains logic (validation, calculation, state changes), it becomes non-trivial and from then on needs tests-first and an interface.
-- This replaces the earlier ADR-12 wording ("an interface needs a reason: a test seam or a second implementation"). Framework abstractions (`ILogger`, `TimeProvider`, `IOptions`) are still never wrapped in our own interfaces.
-
-**Why.**
-- Tests-first for logic gives the design pressure and regression safety where defects actually occur (validation rules, status mapping, bank-failure handling), and means the behaviour that matters is testable by construction. Testing data holders adds noise and brittleness for no protection, so exempting them keeps the suite meaningful.
-- A uniform, easy-to-apply rule ("logic means interface and tests-first; plain data means neither") is simpler to follow and to review than judging each class's need for an abstraction. Interfaces on every logic-bearing class give consistent seams for substitution in tests (ADR-6, ADR-12) and keep dependencies pointing at abstractions (ADR-1, ADR-12).
-- Excluding data types avoids the common ceremony of an interface for every DTO, which would add files without adding seams.
-
-**Trade-off.** An interface for every non-trivial class adds files and some ceremony, which sits in tension with KISS (ADR-1) when a class will only ever have one implementation. We accept that for consistency and testability, and keep the cost down by limiting the rule to classes with real logic and by not wrapping framework abstractions.
-
----
-
-## ADR-14: Hand-written mapping classes behind a generic interface
-
-**Decision.**
-- Where a mapping between two types is needed, write a mapping class by hand. Do not use AutoMapper or any `IMapper`/convention-based mapping library.
-- Every mapping class implements one generic interface, kept in `BusinessLogic/Interfaces/`:
-  ```csharp
-  public interface IMapping<in TSource, out TDestination>
-  {
-      TDestination Map(TSource source);
-  }
-  ```
-  The name `IMapping` is deliberate, so it is never confused with AutoMapper's `IMapper`.
-- Mapping classes live in `Mapping/`, one class per mapping, named for what they map (e.g. `PaymentRequestToBankRequestMapping : IMapping<PostPaymentRequest, BankRequest>`). Consumers depend on `IMapping<TSource, TDestination>`, and the interface-to-implementation registration is in an `Add…` extension method (ADR-12).
-- A mapping class contains logic, so it falls under ADR-13: tests first, in `Unit/Mapping/`.
-- Do not create a mapping class for a trivial one-line conversion; the rule applies where a real mapping between distinct types is needed (for this project: request -> bank request, bank response -> payment outcome, stored payment -> response).
-
-**Why.**
-- Hand-written mappings are explicit and traceable: every field assignment is visible and a rename is a compiler error, whereas convention-based mapping fails at runtime or silently skips properties. That matters for a payments API, where mapping the wrong field (or leaking the card number or CVV into a response) is a compliance problem.
-- No extra dependency or reflection, and no configuration to maintain or validate.
-- A single generic interface gives every mapper the same shape, so they are discoverable, injectable and substitutable in tests (ADR-6) without a mapping framework, and the registration pattern stays uniform (ADR-12).
-- The `IMapping` name avoids confusion with AutoMapper's `IMapper`, which the project does not use.
-
-**Trade-off.** More hand-written code than a convention mapper, which we accept for explicitness and safety; the "no trivial mapping class" guard keeps it from growing ceremony (KISS).
-
-**Rejected.** AutoMapper or other mapping libraries; mapping inside endpoints or services (it hides the field-by-field logic and is harder to test); extension methods without an interface (not substitutable or uniformly registered).
-
----
-
-## ADR-15: Metrics with OpenTelemetry
-
-**Decision.** Metrics are a requirement. Use `System.Diagnostics.Metrics` to define the instruments and OpenTelemetry (metrics signal only) to collect and export them.
-- One `Meter`, named `PaymentGateway.Api`, wrapped in an `IPaymentMetrics` interface (in `DataInterface/`, ADR-13) implemented in `DataLayer/`, so services depend on the abstraction and tests can substitute it (ADR-6).
-- Custom instruments:
-  - `payments.processed` – counter, tag `status` = `authorized` | `declined` | `rejected`.
-  - `bank.requests` – counter, tag `outcome` = `authorized` | `declined` | `error` (bank 503, timeout or other transport failure).
-  - `bank.request.duration` – histogram, unit seconds.
-  - `payments.reversed` – counter, incremented for each completed reversal (ADR-23).
-  - `idempotency.requests` – counter, tag `outcome` = `replayed` | `conflict` (ADR-21).
-- Built-in instrumentation is exported too: ASP.NET Core server metrics (request count, duration, active requests, failures) and `HttpClient` metrics for the bank calls, via the OpenTelemetry ASP.NET Core and HTTP instrumentation packages.
-- Exporters: console exporter by default (visible to a reviewer with no infrastructure); OTLP exporter enabled when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` setting is present, so pointing at a real collector or backend is configuration only.
-- Setup lives in an `Add…` extension method (ADR-12). Only the metrics signal is wired through OpenTelemetry; logging remains Serilog (ADR-11) and tracing is out of scope.
-- **Tag rules:** tags must be low-cardinality (a handful of fixed values) and must never contain card data, payment ids, merchant ids or tokens, in line with ADR-9 and ADR-11.
-- **Tests:** unit-test `PaymentMetrics` first (ADR-13) and cover the metrics in the integration tests (ADR-6): a POST that is authorized, declined, rejected or hits a bank error increments the right counter with the right tag. Use a `MetricCollector` (`Microsoft.Extensions.Diagnostics.Testing`) or a `MeterListener` to read recorded measurements.
-
-**Why.**
-- A payments service has to be observable in production: rate, latency and failure ratio of payments and of the acquiring bank are the first things an operator looks at (for example a rising `bank.requests{outcome=error}` or a falling authorised share). Logs show individual events; metrics show trends and drive alerts.
-- `System.Diagnostics.Metrics` is built into .NET, and ASP.NET Core and `HttpClient` already emit metrics through it, so the incremental cost is a few custom instruments.
-- OpenTelemetry is the vendor-neutral standard: the code defines instruments once, and the choice of backend (Prometheus, Grafana, Datadog, Azure Monitor and others) is configuration, not code, which mirrors how Serilog sits behind `ILogger`.
-- Separating "declined" (a valid business outcome) from bank "error" (an operational failure) in the metrics mirrors ADR-9, so dashboards and alerts are not misled.
-- Low-cardinality, non-sensitive tags protect both the metrics backend (unbounded tags are costly) and cardholder data (PCI).
-
-**Trade-off.** The brief does not ask for metrics, and this adds several packages and a small amount of setup, which sits against KISS (ADR-1). It is accepted as a deliberate departure from the brief for the observability a real payments service needs; the scope is kept small (three instruments, metrics only).
-
-**Alternatives considered.** Documenting metrics only as a production gap (simplest, and consistent with "the brief wins", but nothing demonstrable); prometheus-net (simple but tied to Prometheus); the Application Insights SDK (vendor-specific); App.Metrics (no longer maintained); OpenTelemetry for logs and traces as well (more scope than needed here).
 
 ---
 
@@ -382,6 +187,349 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 - Failing fast on misconfiguration surfaces deployment mistakes at startup instead of at the first payment.
 
 **Rejected.** Exceptions for flow control (throwing a `ValidationException` and catching it in the endpoint); `catch (Exception)` in business code; catch-log-rethrow in every layer; third-party result libraries; automatic retries; echoing submitted values in error responses.
+
+---
+
+# Security and operations
+
+## ADR-7: Authentication – JWT bearer with scope policies, dev tokens via `dotnet user-jwts`
+
+**Decision.** Protect the endpoints with `AddJwtBearer`:
+- `Authority` / `Audience` / issuer come from configuration (in production, the identity provider's metadata).
+- One authorisation policy per scope: `payments:create` (POST payment), `payments:read` (GET payment and transactions) and `payments:reverse` (POST reversal, ADR-23). No/invalid token -> 401; insufficient scope -> 403.
+- For development and review, tokens are produced by the .NET SDK tool `dotnet user-jwts create --scope payments:create --scope payments:read --scope payments:reverse` (Development only; the signing key lives in user secrets).
+- Rules: never write custom token-issuing code, no setting that disables authentication, no hard-coded tokens.
+- All endpoints are served over HTTPS (HTTPS redirection and HSTS), so data is encrypted in transit. Nothing sensitive is persisted (only the last four digits are kept, and never the CVV), so there is currently nothing that needs encrypting at rest. To keep the option open, every store (payments, transactions, audit trail, idempotency records) sits behind an interface (ADR-13), so an encrypting implementation (or a decorator) can be substituted without touching callers; a production store must encrypt at rest with separately held keys.
+- Inbound authentication is independent of the bank call: the bank client must never forward the merchant's token.
+
+**Production design (documented, not built).** Server-to-server merchants authenticate with OAuth 2.0 client credentials and short-lived JWTs issued by a dedicated identity provider (Entra ID, Auth0, Keycloak, Duende). Optional mTLS with certificate-bound tokens for high-assurance merchants; API keys only as a lighter sandbox alternative (hashed at rest, scoped, rotatable). Around it: TLS 1.2+, per-merchant authorisation (a merchant may only read its own payments), secrets in a vault, rate limiting, audit logging without PAN/CVV, and no CVV storage.
+
+**Why.**
+- This is a financial system handling sensitive data; real token validation (signature, issuer, audience, expiry) and least-privilege scopes show how it would be done properly.
+- The brief does not require authentication, and a full identity provider would be far more than the exercise needs. `user-jwts` is the compromise: genuine validation in the code, but the reviewer can obtain a token with one command, with no custom issuing code.
+- Hand-rolling a token endpoint would look secure without being secure, and an on/off switch for authentication is the wrong thing to show in this domain.
+
+**Authentication, metrics (ADR-15), idempotency (ADR-21), auditing (ADR-22) and reversals (ADR-23) are the deliberate departures from the brief** (which asks for none of them); everywhere else the brief wins.
+
+**Two identities per request: who originated it, and on whose behalf.** Every authenticated request carries both, taken from the validated token and never from the request body:
+- **Originator (`InitiatedBy`)**: the authenticated principal that made the call: the token's `sub` claim (a human user's id, or a machine client's id).
+- **On behalf of (`OnBehalfOf`, the merchant account)**: the merchant the operation is performed for: the `merchant_id` claim, falling back to the client id when the token has none (a merchant client acting for itself). The two are equal when a merchant calls for itself and differ when someone acts for a merchant (for example a support user or a platform). In production the identity provider issues this delegation (for example OAuth 2.0 token exchange, RFC 8693, whose `act` claim records the actor); the gateway trusts a validated token and does not decide who may act for whom. `dotnet user-jwts` can add the claims for dev tokens (`--claim merchant_id=…`).
+- Both identities are recorded on every audit event (ADR-22) and on every ledger transaction (ADR-23).
+
+**Per-merchant ownership is built (changed from an earlier "known gap").** The `OnBehalfOf` merchant id is stored as `MerchantId` on each payment and transaction, and every endpoint that reads or changes a payment (GET payment, GET transactions, POST reversal) returns 404 for a payment that belongs to another merchant. *Why the change:* reversals (ADR-23) move money, so letting any caller with a scope reverse or read any payment by id (broken object-level authorisation, the top OWASP API risk) is no longer acceptable. Also note that scopes arrive in the space-separated `scope` claim, so the policies need a small custom requirement rather than `RequireClaim`.
+
+**Rejected.** Omitting auth entirely (documented only); a custom dev token endpoint; a disable switch; a static API key in config; a hard-coded token in the README.
+
+---
+
+## ADR-11: Logging, correlation and request limits
+
+**Decision.**
+- Use **Serilog** (`Serilog.AspNetCore`) as the logging framework, plugged in behind the standard `ILogger<T>` abstraction. Application code depends only on `ILogger<T>`, never on Serilog types, so the framework is a composition-root choice that can be swapped without touching business code.
+- Serilog is configured from `appsettings` (`Serilog.Settings.Configuration`) with a console sink writing JSON (compact JSON formatter), set up in an `Add…` extension method (ADR-12). Enrich events with the request's trace id (verify the enrichment works when implementing).
+- Use structured message templates (named placeholders such as `{PaymentId}`, never string concatenation or interpolation), so each property is captured as a queryable field.
+- Sensitive data must never reach a log event: log scalar facts only (ids, status, outcome), never whole request objects; if an object is ever logged, a Serilog destructuring policy must exclude the card number and CVV (a backstop for the redacted `ToString()` rule in ADR-9).
+- Log only non-sensitive facts: payment id, resulting status, and the bank outcome (authorized / declined / bank error). Never log request bodies, the card number, CVV or tokens.
+- Use ASP.NET Core's default `traceId` (from `Activity` / `HttpContext.TraceIdentifier`) as the correlation id: it is attached to log scopes automatically and included in error (ProblemDetails) responses. No custom correlation middleware or `X-Correlation-Id` header.
+- Cap the request body size (Kestrel `MaxRequestBodySize`, a few KB: a payment request is a few hundred bytes). Oversized bodies get the framework's 413, which is outside the brief's `Rejected` rules and is documented as such.
+- Rate limiting is not built (documented gap; see below).
+
+**Why Serilog.**
+- It is the most popular dedicated structured logging framework in .NET (about 3.6 billion NuGet downloads; `Serilog.AspNetCore` about 869 million, against about 662 million for NLog, its nearest rival, and log4net as the older text-oriented option), so it is the library most .NET engineers and reviewers already know.
+- It is built around structured events: message-template properties become named fields, which is what makes payment logs searchable by payment id or status instead of grepped as text.
+- Enrichment attaches context (such as the trace id) to every event without repeating it at each call site.
+- Destructuring policies give a central place to stop sensitive properties being written, which suits a card-handling service (ADR-9) better than relying only on discipline at each call site.
+- Its sink ecosystem (console, file, Seq, Elasticsearch, Application Insights, OpenTelemetry) means that moving from the console sink here to a real log backend in production is a configuration change.
+- It plugs in behind `ILogger<T>`, so choosing it costs nothing in the business code and does not conflict with ADR-12 (we never wrap `ILogger`).
+
+**Trade-off.** Compared with the built-in providers alone it adds packages and some configuration, and with no log backend in this exercise its largest advantage (sinks) is not exercised; the structured-event model, enrichment and destructuring policies still apply. This was a deliberate choice for a production-style setup.
+
+**Alternatives considered.** The built-in `Microsoft.Extensions.Logging` providers alone (structured templates and a JSON console formatter, no extra dependency; simplest, and the fallback if the dependency is not wanted); NLog (mature and configurable, less common for new .NET work); log4net (older and mainly text-based, not chosen for new code).
+
+**Why the other decisions here.**
+- A payments service must be diagnosable without exposing card data. Structured logs keyed by payment id and status allow tracing a payment without ever recording sensitive fields, and the card-data rules in ADR-9 make the "what not to log" list explicit.
+- The framework already provides a per-request trace id, so a correlation id costs nothing; custom middleware would add code and a header contract the brief does not ask for (KISS).
+- A body-size limit is a one-line configuration that blocks trivially large payloads from an unauthenticated or abusive client; it is the cheapest of the abuse protections.
+- Rate limiting (`AddRateLimiter`) needs policy choices (per client, per scope, limits) that cannot be justified without real traffic, and the brief does not ask for it, so it stays a documented production gap rather than guessed-at code.
+
+**Rejected.** Custom correlation middleware / headers; request/response body logging (leaks card data); building rate limiting now.
+
+---
+
+## ADR-15: Metrics with OpenTelemetry
+
+**Decision.** Metrics are a requirement. Use `System.Diagnostics.Metrics` to define the instruments and OpenTelemetry (metrics signal only) to collect and export them.
+- One `Meter`, named `PaymentGateway.Api`, wrapped in an `IPaymentMetrics` interface (in `DataInterface/`, ADR-13) implemented in `DataLayer/`, so services depend on the abstraction and tests can substitute it (ADR-6).
+- Custom instruments:
+  - `payments.processed` – counter, tag `status` = `authorized` | `declined` | `rejected`.
+  - `bank.requests` – counter, tag `outcome` = `authorized` | `declined` | `error` (bank 503, timeout or other transport failure).
+  - `bank.request.duration` – histogram, unit seconds.
+  - `payments.reversed` – counter, incremented for each completed reversal (ADR-23).
+  - `idempotency.requests` – counter, tag `outcome` = `replayed` | `conflict` (ADR-21).
+- Built-in instrumentation is exported too: ASP.NET Core server metrics (request count, duration, active requests, failures) and `HttpClient` metrics for the bank calls, via the OpenTelemetry ASP.NET Core and HTTP instrumentation packages.
+- Exporters: console exporter by default (visible to a reviewer with no infrastructure); OTLP exporter enabled when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` setting is present, so pointing at a real collector or backend is configuration only.
+- Setup lives in an `Add…` extension method (ADR-12). Only the metrics signal is wired through OpenTelemetry; logging remains Serilog (ADR-11) and tracing is out of scope.
+- **Tag rules:** tags must be low-cardinality (a handful of fixed values) and must never contain card data, payment ids, merchant ids or tokens, in line with ADR-9 and ADR-11.
+- **Tests:** unit-test `PaymentMetrics` first (ADR-13) and cover the metrics in the integration tests (ADR-6): a POST that is authorized, declined, rejected or hits a bank error increments the right counter with the right tag. Use a `MetricCollector` (`Microsoft.Extensions.Diagnostics.Testing`) or a `MeterListener` to read recorded measurements.
+
+**Why.**
+- A payments service has to be observable in production: rate, latency and failure ratio of payments and of the acquiring bank are the first things an operator looks at (for example a rising `bank.requests{outcome=error}` or a falling authorised share). Logs show individual events; metrics show trends and drive alerts.
+- `System.Diagnostics.Metrics` is built into .NET, and ASP.NET Core and `HttpClient` already emit metrics through it, so the incremental cost is a few custom instruments.
+- OpenTelemetry is the vendor-neutral standard: the code defines instruments once, and the choice of backend (Prometheus, Grafana, Datadog, Azure Monitor and others) is configuration, not code, which mirrors how Serilog sits behind `ILogger`.
+- Separating "declined" (a valid business outcome) from bank "error" (an operational failure) in the metrics mirrors ADR-9, so dashboards and alerts are not misled.
+- Low-cardinality, non-sensitive tags protect both the metrics backend (unbounded tags are costly) and cardholder data (PCI).
+
+**Trade-off.** The brief does not ask for metrics, and this adds several packages and a small amount of setup, which sits against KISS (ADR-1). It is accepted as a deliberate departure from the brief for the observability a real payments service needs; the scope is kept small (three instruments, metrics only).
+
+**Alternatives considered.** Documenting metrics only as a production gap (simplest, and consistent with "the brief wins", but nothing demonstrable); prometheus-net (simple but tied to Prometheus); the Application Insights SDK (vendor-specific); App.Metrics (no longer maintained); OpenTelemetry for logs and traces as well (more scope than needed here).
+
+---
+
+# Organisation, layers and naming
+
+## ADR-27: Layers: Api, BusinessLogic, DataInterface and DataLayer, and Entity-suffixed entities
+
+**Decision.** Requirements added 2026-11-16 on top of ADR-1 and ADR-26. The single project is organised into five layers by top-level folder (namespaces follow the folders):
+- `Api/`: the endpoints (thin), plus the HTTP-only concerns (security, error handling, OpenAPI, request-limit options).
+- `ApiInterface/`: the API's contract, the counterpart of `DataInterface/`: the request and response DTOs (`Dtos/Requests`, `Dtos/Responses`).
+- `BusinessLogic/`: services, validation, mapping, the shared outcomes (`Result`, `Error`), in-flight models, and the service interfaces.
+- `DataInterface/`: the interfaces for everything the business logic needs from outside itself (stores, the bank, the ledger, the audit trail, idempotency, metrics) plus the entities, enums and message records in their signatures.
+- `DataLayer/`: the implementations of those interfaces (the in-memory repository, the bank client, and the metrics placeholder).
+Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `AuditEventEntity`) and live in `DataInterface/Entities/`. **Names show the role:** DTOs end in `Request` or `Response` (including the bank's messages), entities in `Entity`, in-flight business models in `Model` (`ProcessedPaymentModel`); there is deliberately no `Dto` suffix, since `Request`/`Response` already marks a DTO and the doubled name adds nothing (best practice: name the role, not the pattern). `Unit/Architecture/NamingConventionTests` enforces it. The composition root (`PaymentGatewayDi.cs`, called from `Program.cs`) is the only code that sees all layers.
+
+**DTOs are the API's interface (amended 2026-11-16).** The request and response DTOs are the contract between the API and its callers, the counterpart of `DataInterface` on the data side, so they have a layer of their own, `ApiInterface/Dtos/Requests|Responses`; the bank's messages, part of `IBankClient`, are `DataInterface/Dtos/Requests|Responses`. The first version of this ADR kept the API DTOs next to the endpoints (`Api/Models`), which forced `BusinessLogic` to depend on `Api`, the one place a lower layer reached up; an intermediate version put them in `BusinessLogic/Interfaces/Dtos`, which hid the fact that the endpoints and the services both use them and neither owns them. In `ApiInterface` both depend on it and it depends on almost nothing (`Shared` and the `DataInterface` enums). A request or a response is a DTO whose role is marked by the `Request`/`Response` suffix instead of a `Dto` postfix, so every `…Request` lives in a `Dtos/Requests` folder and every `…Response` in a `Dtos/Responses` folder, and nothing else lives in them (`NamingConventionTests`).
+
+**Dependency rules.** `Api` -> `BusinessLogic` and `ApiInterface` (and the `DataInterface` enums); `BusinessLogic` -> `ApiInterface` and `DataInterface`, never `Api` or `DataLayer`; `ApiInterface` -> the `DataInterface` enums and `Shared` only; `DataLayer` -> `DataInterface`; `DataInterface` -> nothing of ours above it. `Shared` (`Result`, `Error`, `ErrorKind`, `FieldError`, in `Shared/Outcomes`) is the small cross-layer vocabulary that `IBankClient` and every service return; it depends on nothing of ours, so every layer may use it and there is no exception to the one-way rule. These are enforced by `Unit/Architecture/LayerDependencyTests` (NetArchTest.Rules), which also checks that everything in `Entities/` ends in `Entity`.
+
+**Why.**
+- The layers say where each kind of code lives and what it may know about, so a reader can find things quickly and a change in one layer (a new database, a new endpoint style) does not ripple through the others.
+- `DataInterface` as a separate, lowest layer means the business logic depends on abstractions it owns the shape of, and `DataLayer` can be replaced (a real database, an encrypting store, ADR-7) without touching the business logic.
+- Keeping the endpoints and their DTOs together makes the public contract one folder to review.
+- The `Entity` suffix makes it impossible to confuse a stored type with a DTO in code review (ADR-26).
+- An architecture test turns the rules from convention into something that fails the build.
+
+**Namespaces.** The project's `RootNamespace` is `PaymentGateway` (the assembly is still `PaymentGateway.Api`), so the folder `Api/Endpoints` is the namespace `PaymentGateway.Api.Endpoints` and `DataLayer/Bank` is `PaymentGateway.DataLayer.Bank`, with no repeated segment (an earlier layout produced `PaymentGateway.Api.Api.…`). The six top-level namespaces are `PaymentGateway.Api`, `.ApiInterface`, `.BusinessLogic`, `.DataInterface`, `.DataLayer` and `.Shared`. A file's namespace is exactly that root plus its folder path in both projects (the test project's root is `PaymentGateway.Api.Tests`), and `Unit/Architecture/NamespaceFolderTests` checks it for every file, so a moved file cannot keep a stale namespace.
+
+**Trade-off.** More folders; one project instead of four, so the compiler does not enforce the layering, which is why the architecture tests do. The business logic uses the request and response DTOs as its contract instead of having its own copies, to avoid a second set of identical records and mappings (KISS, ADR-1).
+
+**Possible evolution: separate projects, then separate services (depends on project complexity).** Ideally the contract is kept apart from both what implements it and what consumes it. The layers are drawn along exactly that line, so they can be pulled apart later without redesign:
+- **Contracts:** `ApiInterface` (the API's DTOs) and `DataInterface` (the store, bank, ledger, audit, idempotency and metrics interfaces, with their entities and bank DTOs) become their own projects or packages. They depend on nothing but `Shared`.
+- **Implementers** depend on a contract, never on each other: `DataLayer` implements `DataInterface`; `BusinessLogic` and `Api` implement and expose `ApiInterface`. **Consumers** reference only the contract, never an implementation (a client of the API needs only `ApiInterface`; the business logic needs only `DataInterface`).
+- **What that buys:** the compiler enforces the layering (the architecture tests then become a safety net), contracts can be versioned and released independently, and a concern can move behind its interface into a service of its own. The natural first candidates are the bank client, and the ledger with the audit trail and idempotency store, which have different scaling, availability and compliance needs from the request path (isolating card handling also narrows the PCI scope).
+- **What it costs:** more projects and references, network calls instead of method calls, and the loss of in-process atomicity. A payment, its ledger entry and its audit event would no longer be one in-memory step, so consistency would need an outbox or a saga, idempotent consumers, and versioned contracts.
+- **When:** it is not worth it for this exercise (two endpoints, one team, in-memory stores), which is why it is one project. It becomes worth it with several teams, different release cadences or scaling needs per concern, or contracts shared with other services. The folder rules keep the option open: the interface folders depend on no implementation, no layer reaches up, and the DTOs are not tied to the endpoints.
+
+**Rejected (for now).** Separate projects per layer, and microservices (stronger enforcement and independence but heavier: more project files, references and moving parts than this exercise warrants; the architecture tests give most of the benefit, and see "Possible evolution" above); a separate set of domain models duplicating the DTOs; leaving the layout flat (the status quo before this ADR).
+
+---
+
+## ADR-26: DTOs and storage entities are separate, and storage holds no business logic
+
+**Decision.** Two requirements (added 2026-11-16):
+- **DTOs and storage entities are different types.** API request and response types (DTOs) and the bank's message types are never stored. Each store persists its own entity record, mapped to and from the DTOs by hand-written `IMapping` classes (ADR-14). For payments the entity is `PaymentEntity` (id, owning merchant, status, last four card digits, expiry, currency, amount); the flow is `PostPaymentRequest` -> `ProcessedPaymentModel` (in flight, holds the full card number, never stored) -> `PaymentEntity` (stored) -> `PostPaymentResponse` (returned). The entity never holds the full card number or the CVV.
+- **Storage holds no business logic.** A store (`IPaymentsRepository`, and equally `ITransactionLedger`, `IAuditTrail`, `IIdempotencyStore`) adds, reads by key and, where only the store can guarantee it, performs an atomic primitive (a uniqueness check-and-append, a reserve). It does not know who is asking, apply ownership or status rules, decide retention or build responses. Its interface takes no caller identity. Those decisions belong to the service: `PaymentService.GetAsync` reads the entity and compares its `MerchantId` with `ICallerIdentity`, answering "not found" for another merchant's payment.
+
+**Why.**
+- Decoupled shapes: the public API contract and the storage shape change for different reasons (a new database column is not an API change, and vice versa). Sharing one type ties them together and makes it easy to leak a stored field in a response.
+- Testability and replaceability: with no rules inside it, a store is trivial to test and to replace (a database, an encrypting store, ADR-7); the rules stay in one place, the service, where they are tested without any storage.
+- Safety: ownership checked in the service cannot be lost by swapping the store, and a store that cannot filter by caller cannot be misused to bypass the check.
+
+**Trade-off.** One more record and one more mapping class (and one more constructor parameter on `PaymentService`, which now has eight, an accepted exception for a DI constructor). Atomic primitives such as the ledger's check-and-append and the idempotency reserve are allowed in a store because only the store can make them atomic; they enforce uniqueness, not business policy.
+
+**Rejected.** Storing the response DTO directly (what the first version did: simple, but couples the contract to storage); a repository method that takes a merchant id and filters (ownership inside storage); returning a response from the repository.
+
+**On the full implementation (`dev`).** The in-memory ledger, idempotency store and audit trail there were written before this rule: the ledger filters by merchant and the idempotency store applies the retention period. They would need the same change (ownership and expiry decided by the service or guard) to comply.
+
+---
+
+## ADR-14: Hand-written mapping classes behind a generic interface
+
+**Decision.**
+- Where a mapping between two types is needed, write a mapping class by hand. Do not use AutoMapper or any `IMapper`/convention-based mapping library.
+- Every mapping class implements one generic interface, kept in `BusinessLogic/Interfaces/`:
+  ```csharp
+  public interface IMapping<in TSource, out TDestination>
+  {
+      TDestination Map(TSource source);
+  }
+  ```
+  The name `IMapping` is deliberate, so it is never confused with AutoMapper's `IMapper`.
+- Mapping classes live in `Mapping/`, one class per mapping, named for what they map (e.g. `PaymentRequestToBankRequestMapping : IMapping<PostPaymentRequest, BankRequest>`). Consumers depend on `IMapping<TSource, TDestination>`, and the interface-to-implementation registration is in an `Add…` extension method (ADR-12).
+- A mapping class contains logic, so it falls under ADR-13: tests first, in `Unit/Mapping/`.
+- Do not create a mapping class for a trivial one-line conversion; the rule applies where a real mapping between distinct types is needed (for this project: request -> bank request, bank response -> payment outcome, stored payment -> response).
+
+**Why.**
+- Hand-written mappings are explicit and traceable: every field assignment is visible and a rename is a compiler error, whereas convention-based mapping fails at runtime or silently skips properties. That matters for a payments API, where mapping the wrong field (or leaking the card number or CVV into a response) is a compliance problem.
+- No extra dependency or reflection, and no configuration to maintain or validate.
+- A single generic interface gives every mapper the same shape, so they are discoverable, injectable and substitutable in tests (ADR-6) without a mapping framework, and the registration pattern stays uniform (ADR-12).
+- The `IMapping` name avoids confusion with AutoMapper's `IMapper`, which the project does not use.
+
+**Trade-off.** More hand-written code than a convention mapper, which we accept for explicitness and safety; the "no trivial mapping class" guard keeps it from growing ceremony (KISS).
+
+**Rejected.** AutoMapper or other mapping libraries; mapping inside endpoints or services (it hides the field-by-field logic and is harder to test); extension methods without an interface (not substitutable or uniformly registered).
+
+---
+
+## ADR-12: Dependency injection wiring (production and tests)
+
+**Decision (production).**
+- One composition root: `PaymentGatewayDi.cs`, a single static class at the project root, is the only place that knows concrete types (`Program.cs` calls it once). Everything else uses constructor injection of interfaces; no service locator (`IServiceProvider.GetService` in business code) and no static access.
+- Every mapping from an interface to its concrete implementation is registered in a static extension method on `IServiceCollection` (`public static IServiceCollection Add…(this IServiceCollection services, …)`) in that one class, as an internal static method per concern, e.g. `AddPaymentServices()`, `AddBankClient(configuration)`, `AddApiAuthentication()`, which `InitialiseDi(configuration)` (the one public method, first in the class: the root DI initialisation) chains in order (amended 2026-11-16: the `DependencyInjection/` folder of eight small classes became one class, so all the wiring reads top to bottom in one file; the per-concern methods are internal, visible to the test project, so a test can register just the part it needs). There are no inline `services.AddX<I, T>()` calls in `Program.cs`, endpoints or tests: `Program.cs` only calls `InitialiseDi`, so it stays short, there is one place to look up what implements an interface, and tests reuse the same registrations. Each method returns the `IServiceCollection` so calls chain, and takes the configuration only when it needs it.
+- Lifetimes are chosen deliberately: singleton for thread-safe/stateless things (the in-memory repository, `TimeProvider.System`); scoped for per-request state; transient for cheap stateless services (`PaymentService` may be scoped or transient). Never inject a scoped service into a singleton.
+- The bank client is a typed `HttpClient` via `AddHttpClient<IBankClient, BankClient>()`, never `new HttpClient()`; base address and timeout come from configuration.
+- Configuration uses the options pattern (`BankOptions` bound with `ValidateDataAnnotations().ValidateOnStart()`); inject `IOptions<T>`, not `IConfiguration`.
+- Wiring mistakes fail fast: keep `ValidateOnBuild` / `ValidateScopes` enabled (the Development default).
+- Validators are registered by assembly scanning (`AddValidatorsFromAssemblyContaining<…>()`).
+- Every non-trivial class has an interface, and data types without logic do not (ADR-13). Do not wrap `ILogger`, `TimeProvider` or `IOptions` in our own interfaces.
+
+**Decision (tests).**
+- Unit tests do not use the container: construct the class under test directly, with an NSubstitute substitute for `IBankClient`. A test that needs the container is an integration test, or the class has too many dependencies.
+- Integration tests use `WebApplicationFactory<Program>` with the real container and override only the edges in `ConfigureTestServices`: `IBankClient` (an NSubstitute substitute), `TimeProvider` (`FakeTimeProvider`) and authentication (test-signed JWTs or a test authentication handler, so 401/403 are testable). Everything inside the app stays real.
+- Test setup reuses the production extension methods and never re-registers the app's internals by hand.
+- Isolation: a fresh factory (or repository) per test class so singleton state cannot leak; `IClassFixture<T>` to share one factory within a class.
+- `Program` is made visible to tests. `Microsoft.AspNetCore.Mvc.Testing` exposes the internal top-level `Program` to the test assembly automatically (verified when the tests were written); add `public partial class Program;` only if that stops working.
+- Use NSubstitute for test doubles in unit tests, for any collaborator where that makes the test clearer (ADR-6); use a hand-written test double only where mocking would be unduly complex and the double is clearly more readable.
+
+**Why.**
+- A single composition root and constructor injection keep dependencies explicit and the code testable without a framework; a service locator hides them.
+- Static extension methods are the single, discoverable home for interface-to-implementation mappings: when an interface (ADR-13) gains an implementation, the one place to change or look is its `Add…` method, and a missing or duplicate registration shows up in one folder, not scattered across `Program.cs` and test setup. They also keep `Program.cs` readable and give tests one shared definition of the wiring, so the integration tests exercise the real registrations rather than a copy that could drift.
+- Correct lifetimes matter because the repository is shared by concurrent requests (ADR-3) and captive dependencies cause subtle bugs; `ValidateOnBuild`/`ValidateScopes` and `ValidateOnStart` turn those mistakes and bad configuration into startup failures instead of runtime ones.
+- A typed `HttpClient` lets the factory manage handler lifetime and DNS refresh, avoiding socket exhaustion, and is the natural place for the base URL and timeout (ADR-9).
+- Overriding only the edges keeps integration tests meaningful: they prove the real wiring, validators, service and endpoints together, while the substituted bank, fixed clock and test tokens make them deterministic and independent of the network and an identity provider.
+- A mocking framework keeps interaction checks ("the bank was not called") and scripted outcomes to one line each, and one technique serves both unit and integration tests (ADR-6).
+
+**Rejected.** Service locator / static access; `new HttpClient()`; our own wrappers around framework abstractions; hand-written fakes as the default (they are allowed only as the readability exception in ADR-6); building a separate test container; re-registering internals in test setup.
+
+---
+
+## ADR-13: Test-driven development, and when a type needs an interface
+
+**Decision.**
+- Anything that contains logic is developed test-first: write a failing test, make it pass, then refactor.
+- A class, record or struct that contains no logic is exempt from TDD: plain data holders such as request/response DTOs, entities, database objects and options classes. We do not write tests that only assert property getters and setters.
+- Every other non-trivial class has an interface, kept in `BusinessLogic/Interfaces/` (services, mappings) or `DataInterface/` (stores, bank, metrics) (ADR-1): `PaymentService`, `BankClient`, `PaymentsRepository`, the validators' abstractions and so on. A DTO, entity or database object with no business logic does not get an interface.
+- The line moves with the code: if a data type later gains logic (validation, calculation, state changes), it becomes non-trivial and from then on needs tests-first and an interface.
+- This replaces the earlier ADR-12 wording ("an interface needs a reason: a test seam or a second implementation"). Framework abstractions (`ILogger`, `TimeProvider`, `IOptions`) are still never wrapped in our own interfaces.
+
+**Why.**
+- Tests-first for logic gives the design pressure and regression safety where defects actually occur (validation rules, status mapping, bank-failure handling), and means the behaviour that matters is testable by construction. Testing data holders adds noise and brittleness for no protection, so exempting them keeps the suite meaningful.
+- A uniform, easy-to-apply rule ("logic means interface and tests-first; plain data means neither") is simpler to follow and to review than judging each class's need for an abstraction. Interfaces on every logic-bearing class give consistent seams for substitution in tests (ADR-6, ADR-12) and keep dependencies pointing at abstractions (ADR-1, ADR-12).
+- Excluding data types avoids the common ceremony of an interface for every DTO, which would add files without adding seams.
+
+**Trade-off.** An interface for every non-trivial class adds files and some ceremony, which sits in tension with KISS (ADR-1) when a class will only ever have one implementation. We accept that for consistency and testability, and keep the cost down by limiting the rule to classes with real logic and by not wrapping framework abstractions.
+
+---
+
+## ADR-20: Favour records over classes for DTOs and entities
+
+**Decision.** DTOs (request and response types) and entities (stored or domain data) are declared as `record` types with `init`-only properties, not as classes. A plain class is used only when a type genuinely needs identity-based equality, mutable state or behaviour, in which case it is not a plain data holder and ADR-13 (tests first, interface) applies. A record that holds sensitive data overrides `ToString()` to redact it (ADR-9), because a record's generated `ToString()` prints every property. The current DTOs (`PostPaymentRequest`, `PostPaymentResponse`, `GetPaymentResponse`) already follow this.
+
+**Why.**
+- Records are immutable by default with `init`, so a payment, once built, cannot be altered by accident anywhere in the pipeline; that suits a payment gateway, where a stored payment must stay exactly as it was processed.
+- Value equality is generated, so tests can compare whole objects (`BeEquivalentTo` or `Be`) without hand-written equality code, and `with` expressions create modified copies without mutating the original.
+- A record declaration is shorter and makes the data-holder intent explicit, in line with KISS (ADR-1) and with ADR-13's distinction between plain data types and types with logic.
+- Records are well supported by `System.Text.Json` serialisation and Minimal API model binding.
+
+**Caveats, and how they are handled.**
+- Value equality compares all properties, not identity. For an entity whose identity is its id, compare ids explicitly where that matters, or use a class if identity equality is required.
+- The generated `ToString()` leaks property values; hence the redaction rule above.
+- Records stored in the repository are shared references; with `init`-only properties they cannot be mutated by callers, so the in-memory store stays safe for concurrent reads (ADR-3).
+
+**Rejected.** Mutable classes with public setters for data holders (as in the original template); records with `set` accessors.
+
+---
+
+## ADR-25: Service interfaces, decorators and validators
+
+**Decision.**
+- **Interfaces.** Besides the repository, bank client, mapping, metrics, idempotency, audit and ledger interfaces already named in earlier ADRs, add `IPaymentService` (validate, bank, store), `IReversalService` (the reversal flow and its invariants, ADR-23) and `ICallerIdentity` (gives `InitiatedBy` and `OnBehalfOf` from the validated token, ADR-7). All are in `BusinessLogic/Interfaces/` or `DataInterface/`, async where they do I/O (ADR-16).
+- **Decorators for cross-cutting behaviour.** Idempotency (ADR-21) and auditing (ADR-22) wrap the payment flow as decorators that implement the same interface and delegate to the inner one: `IdempotentPaymentService` and `AuditedPaymentService` around `PaymentService`, and the same for reversals. Audit is the outermost layer (so replays and conflicts are recorded), then idempotency, then the core service. The decorators are composed explicitly in an `Add…` extension method (ADR-12), without a decoration library. The Decorator pattern is named in a comment on each class (ADR-1).
+- **Validators.** Request validation uses FluentValidation's own `IValidator<PostPaymentRequest>`, implemented by `PostPaymentRequestValidator`, and does not get a second, custom interface. The validator takes an injected `TimeProvider` for the expiry check and is registered by assembly scanning in an `Add…` method (ADR-8, ADR-12).
+
+**Why.**
+- Decorators keep `PaymentService` small and focused on the payment flow, so the size limits (ADR-18) hold, and each cross-cutting concern is a separate class that can be tested alone and reordered; folding idempotency and auditing into the service would break the limits and mix concerns.
+- `IValidator<T>` is the library's standard interface; a custom duplicate would add a file and no seam.
+- `ICallerIdentity` keeps token-claims parsing in one place instead of scattered through endpoints and services, and gives tests one thing to substitute.
+
+**Trade-off.** More small classes and an explicit composition root for the decorator chain; accepted for focused, testable units. A decorator library would shorten the composition but adds a dependency for a handful of registrations.
+
+**Rejected.** Putting idempotency and audit inside `PaymentService`; a custom validator interface; a decoration library.
+
+---
+
+## ADR-28: Writing for the reviewer
+
+**Decision.** The repository is written to be read cold, quickly, by someone who did not build it (principles added 2026-11-16, also in `CLAUDE.md`):
+- The few files that implement the brief are small and flat, and the README lists them in reading order with their sizes.
+- Every top-level folder has a short `README.md` (what it is, what it may depend on, where to start), enforced by `FolderReadmeTests`; there is no unused code (a type or member is used, or is a labelled placeholder contract); folders are named by role, and what can be skipped is kept in clearly named folders.
+- What can be skipped is labelled as skippable; placeholders carry a `PLACEHOLDER` comment.
+- Every departure from, or interpretation of, the brief is in one README table with its reason.
+- Documentation is layered by reader (README, then ADRs, then the assistant's working rules) without repeating itself, and is updated in the same commit as the change it describes.
+- Claims are backed by tests where possible (the contract, architecture and naming tests), and names and comments say why, not what.
+
+**Why.** A reviewer has limited time and judges simplicity and judgement as much as correctness. The brief asks for code that is "simple and maintainable" and for key design considerations and assumptions to be documented; a repository that makes the important parts easy to find, and honest about what it adds, meets both. A stale or buried explanation costs more than a missing one.
+
+**Trade-off.** More documentation to keep true. The README table and reading guide are small, and the tests catch drift for the claims that matter.
+
+**Rejected.** A long README that repeats the ADRs; leaving departures from the brief to be discovered in code comments; relying on the reviewer to work out which files matter.
+
+---
+
+# Testing, code quality and workflow
+
+## ADR-6: xUnit v3 with AwesomeAssertions
+
+**Decision.** Test with xUnit v3 (`xunit.v3` 4.x) and AwesomeAssertions (`.Should()` syntax). Do not use FluentAssertions.
+
+**xUnit v3 on Microsoft Testing Platform (MTP).** Migrated from xUnit 2.9.3 so that the project follows its own rule of using the latest stable dependencies (ADR-4), while the test code was still small (no `IAsyncLifetime`, `Xunit.Abstractions` or `async void` to change). Consequences, all verified by running the suite:
+- The test project is an executable (`<OutputType>Exe</OutputType>`), as xUnit v3 requires. The runner packages `Microsoft.NET.Test.Sdk` and `xunit.runner.visualstudio` stay in place, as the xUnit documentation recommends for compatibility.
+- `xunit.v3` 4.x uses MTP v2, and the VSTest target is no longer supported, so a root `global.json` with `{ "test": { "runner": "Microsoft.Testing.Platform" } }` turns on MTP mode for `dotnet test` on the .NET 10 SDK. `dotnet test`, `dotnet test PaymentGateway.sln` and `dotnet test --solution PaymentGateway.sln` all work. Without that file `dotnet test` fails. The repository already needs the .NET 10 SDK to build (ADR-4), so this adds no new requirement for a reviewer.
+- MTP changes the filter options: VSTest's `--filter` is replaced by switches such as `--filter-namespace "PaymentGateway.Api.Tests.Unit.*"` and `--filter-not-trait "Category=Simulator"`.
+- `coverlet.collector` does not work under MTP, so it is replaced by `Microsoft.Testing.Extensions.CodeCoverage`: `dotnet test --coverage --coverage-output-format cobertura` writes to `TestResults/` (git-ignored).
+- The xUnit1051 analyzer requires every awaited call that accepts a `CancellationToken` to be given `TestContext.Current.CancellationToken`, so tests use that instead of `CancellationToken.None` (ADR-16). Only tests of cancellation itself use their own source.
+- Alternative considered: staying on xUnit 2.9.3 (zero change, but the previous line, so it would have needed a documented exception to ADR-4), or xUnit v3 3.x (keeps VSTest and Coverlet, but is not the latest stable).
+
+**Why.**
+- FluentAssertions v8+ requires a paid licence for commercial use; a candidate submission depending on a paid library invites an avoidable question.
+- AwesomeAssertions is the community fork of FluentAssertions 7 (Apache 2.0), keeps the familiar `.Should()` syntax and is close to a drop-in replacement.
+
+**Rejected.**
+- *Shouldly* – free and the most popular alternative, but a different syntax; the difference is mostly taste.
+- *Plain xUnit `Assert`* – no extra dependency and adequate for simple tests; AwesomeAssertions was preferred for readability.
+- *FluentAssertions 7.x pinned* – free, but no longer the maintained line.
+
+**Tests against the real simulator.** In addition to the stubbed-bank tests, a small set of tests call the real Mountebank simulator, tagged `[Trait("Category", "Simulator")]` and skipped when it is unreachable. *Why:* a stubbed `IBankClient` only proves our code against our own assumptions about the bank. The real simulator proves the actual contract: snake_case fields, `MM/YYYY` expiry, odd/even/zero card-number behaviour, and the 503 path. *Why optional and tagged:* they need Docker, so they must not make the normal `dotnet test` fail on a machine without it, and a reviewer can still run them with one command.
+
+**Integration tests are a requirement, not an extra.** Every endpoint has integration tests that go through the whole pipeline with `WebApplicationFactory`, a stubbed bank client and test tokens, and they run in a plain `dotnet test` with no Docker. Minimum scenarios:
+- POST: authorized (card ends in an odd digit), declined (even digit), and rejected for each class of invalid input plus malformed JSON, asserting the bank was not called and nothing was stored.
+- POST when the bank fails (503 or timeout): an error response, and nothing stored.
+- GET: an existing payment (a POST-then-GET round trip returns the same data) and an unknown id (404).
+- Authentication: 401 with no or an invalid token and 403 with the wrong scope, on both endpoints.
+- Security: no response body contains the full card number or CVV.
+- Ownership, idempotency, reversals and audit: the required scenarios are listed in ADR-7, ADR-21, ADR-23 and ADR-22 respectively, and are part of the minimum suite.
+
+*Why.* Unit tests prove the pieces; only an integration test proves the wiring, JSON binding and mapping (including snake_case/camelCase and the `Rejected` behaviour for malformed input), authentication and authorisation policies, validation, and the HTTP status mapping working together, which is where most real defects in an API like this appear. The brief expects automated tests and leaves the type to us; for a two-endpoint service an end-to-end suite through the real pipeline gives the most confidence per test. Keeping them Docker-free (stubbed bank) makes them deterministic and runnable by any reviewer; contract checks against the real simulator are the separate, tagged `Simulator` tests.
+
+**Unit and integration tests are kept apart by directory.** Both live in the single test project (ADR-1), under separate top-level folders:
+- `Unit/` mirrors the implementation's directory structure. The tests for `BusinessLogic/Services/PaymentService.cs` are in `Unit/Services/PaymentServiceTests.cs`, for `Validation/…` in `Unit/Validation/`, and so on: one test class per class under test, named `[ClassUnderTest]Tests`.
+- `Integration/` is organised by feature/endpoint (`Integration/Payments/…`), with the real-simulator tests in `Integration/Simulator/`. It does not mirror implementation classes, because an integration test exercises many of them at once.
+- `TestSupport/` holds shared helpers (test-token factory, the web application factory setup). Namespaces follow folders.
+
+*Why.* The two kinds of test have different speed, dependencies and purpose, so people (and CI) should be able to run and read them separately, e.g. `dotnet test --filter-namespace "PaymentGateway.Api.Tests.Unit.*"` (MTP syntax, ADR-6). Mirroring the source tree for unit tests makes a test trivially findable from the class it covers (and shows at a glance which classes lack tests), while integration tests are about behaviour across the pipeline, so organising them by feature matches how they are described and reviewed. Keeping a class's tests out of integration folders also stops unit tests quietly growing a `WebApplicationFactory` dependency.
+
+**Mocking: NSubstitute by default; a hand-written test double only when mocking would be unduly complex.** Any collaborator may be substituted with `Substitute.For<T>()` when that makes a unit test clearer; there is deliberately no rule restricting mocking to the system's edges. Examples in use: `IBankClient` in both unit and integration tests, and `IPaymentsRepository` in the unit tests of its consumers (for example `PaymentService`, where "nothing is stored when the request is invalid or the bank fails" is itself a requirement checked as an interaction). The clock is Microsoft's `FakeTimeProvider` (a test double from a package, not hand-written).
+
+*Why.* The brief's key rule, "an invalid request never reaches the bank", is an interaction, and a mock states it in one line (`bank.DidNotReceive().SendAsync(...)`) where a hand-written fake would need its own call counter. Scripting outcomes (authorized, declined, 503, timeout) is a one-liner per test with a substitute but a growing class with a fake, and one technique across unit and integration tests means a single thing to learn and no test-only classes to maintain. NSubstitute was chosen over Moq and FakeItEasy for its minimal syntax (the substitute is called as if it were the real object), active maintenance, permissive licence (BSD-3) and because Moq's 2023 SponsorLink episode makes some teams wary of it. *The exception.* The default is a mocking framework, but readability is the test: where mocking would cause undue complexity (for example an elaborate multi-step setup, callbacks, or state that a mock expresses awkwardly) and a small hand-written test double is clearly more readable, use the hand-written double. Such a double lives in `TestSupport/` and carries a short comment saying why a mock was not used, so the exception stays visible and deliberate and does not become the norm. *Why allow it:* the aim of a test double is a clear, trustworthy test, not allegiance to a tool; forcing a mock into a case it fits badly produces setup noise that hides what the test is about. *Why not the other way round (fakes by default):* in the common cases here (script an outcome, verify the bank was not called) a mock is shorter and needs no extra classes.
+
+*Guard rail:* verify interactions only where the interaction is the requirement (for example the bank is not called for a rejected payment); otherwise assert on outcomes. *Note.* The integration tests are unaffected: they still override only the bank client, the clock and authentication in `ConfigureTestServices` (ADR-12), because their purpose is to exercise the real wiring.
+
+**Arrange-Act-Assert, with explicit section comments.** Every test follows the Arrange-Act-Assert pattern and marks each section with a comment (`// Arrange`, `// Act`, `// Assert`), in that order and separated by a blank line. There is exactly one Act per test; to cover more inputs use a `[Theory]` rather than several Acts. When a section is empty or done elsewhere the comment stays and says where (for example `// Arrange: done in the constructor`), so the structure is always visible. There are no assertions in Arrange and no setup in Assert.
+
+**Shared setup lives in fixtures or the constructor, not in copies.** Setup that several tests share is abstracted away: cheap per-test setup in the constructor (xUnit creates a new instance for every test) with `IDisposable.Dispose` for teardown, or `IAsyncLifetime` when it is asynchronous; expensive setup shared by the tests of one class (for example a `WebApplicationFactory`) in an `IClassFixture<T>`, and across classes in an `ICollectionFixture<T>`. Fixtures, builders and helpers live in `TestSupport/` (ADR-24). A shared fixture must not hold mutable state that one test can leak into another, which is consistent with ADR-12's fresh-factory-per-class rule.
+
+*Why.* The explicit AAA comments make every test readable the same way: a reader finds what is set up, what is exercised and what is expected without parsing the code, and a test with two Acts or assertions mixed into setup is visible at a glance. A single Act keeps each test about one behaviour, so a failure points at one thing. Pulling shared setup into the constructor or fixtures follows the rule of three (ADR-24), removes copy-paste, and keeps each test short enough to meet the size limits (ADR-18); the per-test instance that xUnit creates gives isolation by default, and class and collection fixtures are reserved for setup that is genuinely expensive. *Trade-off.* A few extra comment lines per test and a little indirection to find shared setup; accepted for uniform structure.
+
+**Test approach.** Unit tests for validators and `PaymentService` (with a substitute `IBankClient`); integration tests through `WebApplicationFactory` with a substituted bank client and test tokens. Test names follow `[Method]_[Scenario]_[ExpectedResult]`.
 
 ---
 
@@ -446,24 +594,42 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 
 ---
 
-## ADR-20: Favour records over classes for DTOs and entities
+## ADR-24: Global usings per project, and minimising boilerplate
 
-**Decision.** DTOs (request and response types) and entities (stored or domain data) are declared as `record` types with `init`-only properties, not as classes. A plain class is used only when a type genuinely needs identity-based equality, mutable state or behaviour, in which case it is not a plain data holder and ADR-13 (tests first, interface) applies. A record that holds sensitive data overrides `ToString()` to redact it (ADR-9), because a record's generated `ToString()` prints every property. The current DTOs (`PostPaymentRequest`, `PostPaymentResponse`, `GetPaymentResponse`) already follow this.
+**Decision.**
+- **One `Usings.cs` per project** (the API project and the test project each have their own; the name is kept from the existing test project file), holding `global using` directives for namespaces that are used throughout that project: both framework namespaces and our own. Per-file `using` directives are then limited to namespaces needed by only one or two specific files.
+- **The threshold.** A namespace used by three or more files in a project is made global; one used by one or two files stays a local `using` in those files. Review the list when a namespace crosses the threshold in either direction.
+- **Build on `ImplicitUsings`.** Both projects keep `<ImplicitUsings>enable</ImplicitUsings>`, which already supplies the common `System.*` namespaces (and the web SDK's additions), so `Usings.cs` only adds what is not already implicit.
+- **Contents.** Typical API-project candidates are our own widely used namespaces (for example `PaymentGateway.Api.Interfaces`, `...Models.Requests`, `...Models.Responses`); typical test-project candidates are the test libraries (`Xunit`, `AwesomeAssertions`, `NSubstitute`) and the same widely used application namespaces. Group framework, then third-party, then our own namespaces, each alphabetised. The test project's existing `Usings.cs` is kept and extended, and the API project gets one of the same name.
+- **Keep the list small and unsurprising.** Do not make a namespace global when it would create ambiguous type names, hide where a commonly confusing type comes from, or when only a couple of files use it. Avoid `global using static` unless it clearly improves readability. Global usings are per project; they are not shared across projects through `Directory.Build.props`.
+- **Minimise boilerplate, especially when it repeats.**
+  - Use the language features that remove ceremony: file-scoped namespaces, primary constructors, records, expression-bodied members, target-typed `new`, collection expressions, pattern matching and top-level statements.
+  - Extract repeated code once it appears for the third time (the rule of three), as a helper, extension method, base type or builder; do not abstract speculatively on the first or second occurrence.
+  - In tests, put repeated arrange code into builders and helpers in `TestSupport/` (for example a payment builder, the web application factory setup and a test-token factory) and use `[Theory]` for the same check over several inputs, instead of copy-pasted tests.
+  - Do not add comments or XML documentation that merely restate the code.
+  - Boilerplate removal must not hide behaviour: prefer an explicit helper over reflection, conventions or generated magic (consistent with ADR-14's rejection of AutoMapper).
 
 **Why.**
-- Records are immutable by default with `init`, so a payment, once built, cannot be altered by accident anywhere in the pipeline; that suits a payment gateway, where a stored payment must stay exactly as it was processed.
-- Value equality is generated, so tests can compare whole objects (`BeEquivalentTo` or `Be`) without hand-written equality code, and `with` expressions create modified copies without mutating the original.
-- A record declaration is shorter and makes the data-holder intent explicit, in line with KISS (ADR-1) and with ADR-13's distinction between plain data types and types with logic.
-- Records are well supported by `System.Text.Json` serialisation and Minimal API model binding.
+- ADR-19's one-type-per-file rule produces many small files; without global usings each one begins with the same block of directives, which is noise that buries the one or two usings that say something about that file.
+- Showing only the unusual dependencies at the top of a file makes it easier to see what a file really relies on, and removes churn when a widely used namespace moves.
+- Repeated boilerplate is a maintenance cost: every copy must be changed together, and mistakes creep in. The rule of three balances DRY (ADR-1) against premature abstraction, which would cut against KISS.
+- Language features that remove ceremony make the code shorter without hiding what it does; reflection-style magic would hide behaviour, which is why it is excluded.
 
-**Caveats, and how they are handled.**
-- Value equality compares all properties, not identity. For an entity whose identity is its id, compare ids explicitly where that matters, or use a class if identity equality is required.
-- The generated `ToString()` leaks property values; hence the redaction rule above.
-- Records stored in the repository are shared references; with `init`-only properties they cannot be mutated by callers, so the in-memory store stays safe for concurrent reads (ADR-3).
+**Trade-off.** Global usings make a file's origin of a type less visible in isolation (the type's namespace is not at the top of every file), and a badly chosen global namespace can cause ambiguity project-wide. The threshold, the small-list rule and the ambiguity exclusion are there to keep that in check.
 
-**Rejected.** Mutable classes with public setters for data holders (as in the original template); records with `set` accessors.
+**Rejected.** A full set of per-file usings everywhere (noisy); making everything global (hides dependencies and invites ambiguity); sharing one global-usings list across projects; generating boilerplate through reflection or conventions that obscure behaviour; abstracting on the first duplicate.
 
 ---
+
+## ADR-10: Source control workflow
+
+**Decision.** This is a solo exercise, so no feature/bugfix/hotfix branches. Work on `dev`; `main` stays the clean template. Make small, frequent commits (one logical step each, only when build and tests pass) using `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`). Tag checkpoints (`git tag checkpoint-N`) before risky changes, push `dev` to `origin` periodically as a backup, and squash-merge `dev` into `main` at the end (or keep the history if it tells a clear story; decide then).
+
+**Why.** Feature branches add ceremony without safety benefit for one person; small commits and tags give the same ability to roll back. Squashing gives the reviewer a tidy result.
+
+---
+
+# Designed but not built on the `lean` branch
 
 ## ADR-21: Idempotency keys
 
@@ -544,124 +710,6 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 
 ---
 
-## ADR-24: Global usings per project, and minimising boilerplate
-
-**Decision.**
-- **One `Usings.cs` per project** (the API project and the test project each have their own; the name is kept from the existing test project file), holding `global using` directives for namespaces that are used throughout that project: both framework namespaces and our own. Per-file `using` directives are then limited to namespaces needed by only one or two specific files.
-- **The threshold.** A namespace used by three or more files in a project is made global; one used by one or two files stays a local `using` in those files. Review the list when a namespace crosses the threshold in either direction.
-- **Build on `ImplicitUsings`.** Both projects keep `<ImplicitUsings>enable</ImplicitUsings>`, which already supplies the common `System.*` namespaces (and the web SDK's additions), so `Usings.cs` only adds what is not already implicit.
-- **Contents.** Typical API-project candidates are our own widely used namespaces (for example `PaymentGateway.Api.Interfaces`, `...Models.Requests`, `...Models.Responses`); typical test-project candidates are the test libraries (`Xunit`, `AwesomeAssertions`, `NSubstitute`) and the same widely used application namespaces. Group framework, then third-party, then our own namespaces, each alphabetised. The test project's existing `Usings.cs` is kept and extended, and the API project gets one of the same name.
-- **Keep the list small and unsurprising.** Do not make a namespace global when it would create ambiguous type names, hide where a commonly confusing type comes from, or when only a couple of files use it. Avoid `global using static` unless it clearly improves readability. Global usings are per project; they are not shared across projects through `Directory.Build.props`.
-- **Minimise boilerplate, especially when it repeats.**
-  - Use the language features that remove ceremony: file-scoped namespaces, primary constructors, records, expression-bodied members, target-typed `new`, collection expressions, pattern matching and top-level statements.
-  - Extract repeated code once it appears for the third time (the rule of three), as a helper, extension method, base type or builder; do not abstract speculatively on the first or second occurrence.
-  - In tests, put repeated arrange code into builders and helpers in `TestSupport/` (for example a payment builder, the web application factory setup and a test-token factory) and use `[Theory]` for the same check over several inputs, instead of copy-pasted tests.
-  - Do not add comments or XML documentation that merely restate the code.
-  - Boilerplate removal must not hide behaviour: prefer an explicit helper over reflection, conventions or generated magic (consistent with ADR-14's rejection of AutoMapper).
-
-**Why.**
-- ADR-19's one-type-per-file rule produces many small files; without global usings each one begins with the same block of directives, which is noise that buries the one or two usings that say something about that file.
-- Showing only the unusual dependencies at the top of a file makes it easier to see what a file really relies on, and removes churn when a widely used namespace moves.
-- Repeated boilerplate is a maintenance cost: every copy must be changed together, and mistakes creep in. The rule of three balances DRY (ADR-1) against premature abstraction, which would cut against KISS.
-- Language features that remove ceremony make the code shorter without hiding what it does; reflection-style magic would hide behaviour, which is why it is excluded.
-
-**Trade-off.** Global usings make a file's origin of a type less visible in isolation (the type's namespace is not at the top of every file), and a badly chosen global namespace can cause ambiguity project-wide. The threshold, the small-list rule and the ambiguity exclusion are there to keep that in check.
-
-**Rejected.** A full set of per-file usings everywhere (noisy); making everything global (hides dependencies and invites ambiguity); sharing one global-usings list across projects; generating boilerplate through reflection or conventions that obscure behaviour; abstracting on the first duplicate.
-
----
-
-## ADR-25: Service interfaces, decorators and validators
-
-**Decision.**
-- **Interfaces.** Besides the repository, bank client, mapping, metrics, idempotency, audit and ledger interfaces already named in earlier ADRs, add `IPaymentService` (validate, bank, store), `IReversalService` (the reversal flow and its invariants, ADR-23) and `ICallerIdentity` (gives `InitiatedBy` and `OnBehalfOf` from the validated token, ADR-7). All are in `BusinessLogic/Interfaces/` or `DataInterface/`, async where they do I/O (ADR-16).
-- **Decorators for cross-cutting behaviour.** Idempotency (ADR-21) and auditing (ADR-22) wrap the payment flow as decorators that implement the same interface and delegate to the inner one: `IdempotentPaymentService` and `AuditedPaymentService` around `PaymentService`, and the same for reversals. Audit is the outermost layer (so replays and conflicts are recorded), then idempotency, then the core service. The decorators are composed explicitly in an `Add…` extension method (ADR-12), without a decoration library. The Decorator pattern is named in a comment on each class (ADR-1).
-- **Validators.** Request validation uses FluentValidation's own `IValidator<PostPaymentRequest>`, implemented by `PostPaymentRequestValidator`, and does not get a second, custom interface. The validator takes an injected `TimeProvider` for the expiry check and is registered by assembly scanning in an `Add…` method (ADR-8, ADR-12).
-
-**Why.**
-- Decorators keep `PaymentService` small and focused on the payment flow, so the size limits (ADR-18) hold, and each cross-cutting concern is a separate class that can be tested alone and reordered; folding idempotency and auditing into the service would break the limits and mix concerns.
-- `IValidator<T>` is the library's standard interface; a custom duplicate would add a file and no seam.
-- `ICallerIdentity` keeps token-claims parsing in one place instead of scattered through endpoints and services, and gives tests one thing to substitute.
-
-**Trade-off.** More small classes and an explicit composition root for the decorator chain; accepted for focused, testable units. A decorator library would shorten the composition but adds a dependency for a handful of registrations.
-
-**Rejected.** Putting idempotency and audit inside `PaymentService`; a custom validator interface; a decoration library.
-
----
-
-## ADR-26: DTOs and storage entities are separate, and storage holds no business logic
-
-**Decision.** Two requirements (added 2026-11-16):
-- **DTOs and storage entities are different types.** API request and response types (DTOs) and the bank's message types are never stored. Each store persists its own entity record, mapped to and from the DTOs by hand-written `IMapping` classes (ADR-14). For payments the entity is `PaymentEntity` (id, owning merchant, status, last four card digits, expiry, currency, amount); the flow is `PostPaymentRequest` -> `ProcessedPaymentModel` (in flight, holds the full card number, never stored) -> `PaymentEntity` (stored) -> `PostPaymentResponse` (returned). The entity never holds the full card number or the CVV.
-- **Storage holds no business logic.** A store (`IPaymentsRepository`, and equally `ITransactionLedger`, `IAuditTrail`, `IIdempotencyStore`) adds, reads by key and, where only the store can guarantee it, performs an atomic primitive (a uniqueness check-and-append, a reserve). It does not know who is asking, apply ownership or status rules, decide retention or build responses. Its interface takes no caller identity. Those decisions belong to the service: `PaymentService.GetAsync` reads the entity and compares its `MerchantId` with `ICallerIdentity`, answering "not found" for another merchant's payment.
-
-**Why.**
-- Decoupled shapes: the public API contract and the storage shape change for different reasons (a new database column is not an API change, and vice versa). Sharing one type ties them together and makes it easy to leak a stored field in a response.
-- Testability and replaceability: with no rules inside it, a store is trivial to test and to replace (a database, an encrypting store, ADR-7); the rules stay in one place, the service, where they are tested without any storage.
-- Safety: ownership checked in the service cannot be lost by swapping the store, and a store that cannot filter by caller cannot be misused to bypass the check.
-
-**Trade-off.** One more record and one more mapping class (and one more constructor parameter on `PaymentService`, which now has eight, an accepted exception for a DI constructor). Atomic primitives such as the ledger's check-and-append and the idempotency reserve are allowed in a store because only the store can make them atomic; they enforce uniqueness, not business policy.
-
-**Rejected.** Storing the response DTO directly (what the first version did: simple, but couples the contract to storage); a repository method that takes a merchant id and filters (ownership inside storage); returning a response from the repository.
-
-**On the full implementation (`dev`).** The in-memory ledger, idempotency store and audit trail there were written before this rule: the ledger filters by merchant and the idempotency store applies the retention period. They would need the same change (ownership and expiry decided by the service or guard) to comply.
-
----
-
-## ADR-27: Layers: Api, BusinessLogic, DataInterface and DataLayer, and Entity-suffixed entities
-
-**Decision.** Requirements added 2026-11-16 on top of ADR-1 and ADR-26. The single project is organised into five layers by top-level folder (namespaces follow the folders):
-- `Api/`: the endpoints (thin), plus the HTTP-only concerns (security, error handling, OpenAPI, request-limit options).
-- `ApiInterface/`: the API's contract, the counterpart of `DataInterface/`: the request and response DTOs (`Dtos/Requests`, `Dtos/Responses`).
-- `BusinessLogic/`: services, validation, mapping, the shared outcomes (`Result`, `Error`), in-flight models, and the service interfaces.
-- `DataInterface/`: the interfaces for everything the business logic needs from outside itself (stores, the bank, the ledger, the audit trail, idempotency, metrics) plus the entities, enums and message records in their signatures.
-- `DataLayer/`: the implementations of those interfaces (the in-memory repository, the bank client, and the metrics placeholder).
-Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `AuditEventEntity`) and live in `DataInterface/Entities/`. **Names show the role:** DTOs end in `Request` or `Response` (including the bank's messages), entities in `Entity`, in-flight business models in `Model` (`ProcessedPaymentModel`); there is deliberately no `Dto` suffix, since `Request`/`Response` already marks a DTO and the doubled name adds nothing (best practice: name the role, not the pattern). `Unit/Architecture/NamingConventionTests` enforces it. The composition root (`PaymentGatewayDi.cs`, called from `Program.cs`) is the only code that sees all layers.
-
-**DTOs are the API's interface (amended 2026-11-16).** The request and response DTOs are the contract between the API and its callers, the counterpart of `DataInterface` on the data side, so they have a layer of their own, `ApiInterface/Dtos/Requests|Responses`; the bank's messages, part of `IBankClient`, are `DataInterface/Dtos/Requests|Responses`. The first version of this ADR kept the API DTOs next to the endpoints (`Api/Models`), which forced `BusinessLogic` to depend on `Api`, the one place a lower layer reached up; an intermediate version put them in `BusinessLogic/Interfaces/Dtos`, which hid the fact that the endpoints and the services both use them and neither owns them. In `ApiInterface` both depend on it and it depends on almost nothing (`Shared` and the `DataInterface` enums). A request or a response is a DTO whose role is marked by the `Request`/`Response` suffix instead of a `Dto` postfix, so every `…Request` lives in a `Dtos/Requests` folder and every `…Response` in a `Dtos/Responses` folder, and nothing else lives in them (`NamingConventionTests`).
-
-**Dependency rules.** `Api` -> `BusinessLogic` and `ApiInterface` (and the `DataInterface` enums); `BusinessLogic` -> `ApiInterface` and `DataInterface`, never `Api` or `DataLayer`; `ApiInterface` -> the `DataInterface` enums and `Shared` only; `DataLayer` -> `DataInterface`; `DataInterface` -> nothing of ours above it. `Shared` (`Result`, `Error`, `ErrorKind`, `FieldError`, in `Shared/Outcomes`) is the small cross-layer vocabulary that `IBankClient` and every service return; it depends on nothing of ours, so every layer may use it and there is no exception to the one-way rule. These are enforced by `Unit/Architecture/LayerDependencyTests` (NetArchTest.Rules), which also checks that everything in `Entities/` ends in `Entity`.
-
-**Why.**
-- The layers say where each kind of code lives and what it may know about, so a reader can find things quickly and a change in one layer (a new database, a new endpoint style) does not ripple through the others.
-- `DataInterface` as a separate, lowest layer means the business logic depends on abstractions it owns the shape of, and `DataLayer` can be replaced (a real database, an encrypting store, ADR-7) without touching the business logic.
-- Keeping the endpoints and their DTOs together makes the public contract one folder to review.
-- The `Entity` suffix makes it impossible to confuse a stored type with a DTO in code review (ADR-26).
-- An architecture test turns the rules from convention into something that fails the build.
-
-**Namespaces.** The project's `RootNamespace` is `PaymentGateway` (the assembly is still `PaymentGateway.Api`), so the folder `Api/Endpoints` is the namespace `PaymentGateway.Api.Endpoints` and `DataLayer/Bank` is `PaymentGateway.DataLayer.Bank`, with no repeated segment (an earlier layout produced `PaymentGateway.Api.Api.…`). The six top-level namespaces are `PaymentGateway.Api`, `.ApiInterface`, `.BusinessLogic`, `.DataInterface`, `.DataLayer` and `.Shared`. A file's namespace is exactly that root plus its folder path in both projects (the test project's root is `PaymentGateway.Api.Tests`), and `Unit/Architecture/NamespaceFolderTests` checks it for every file, so a moved file cannot keep a stale namespace.
-
-**Trade-off.** More folders; one project instead of four, so the compiler does not enforce the layering, which is why the architecture tests do. The business logic uses the request and response DTOs as its contract instead of having its own copies, to avoid a second set of identical records and mappings (KISS, ADR-1).
-
-**Possible evolution: separate projects, then separate services (depends on project complexity).** Ideally the contract is kept apart from both what implements it and what consumes it. The layers are drawn along exactly that line, so they can be pulled apart later without redesign:
-- **Contracts:** `ApiInterface` (the API's DTOs) and `DataInterface` (the store, bank, ledger, audit, idempotency and metrics interfaces, with their entities and bank DTOs) become their own projects or packages. They depend on nothing but `Shared`.
-- **Implementers** depend on a contract, never on each other: `DataLayer` implements `DataInterface`; `BusinessLogic` and `Api` implement and expose `ApiInterface`. **Consumers** reference only the contract, never an implementation (a client of the API needs only `ApiInterface`; the business logic needs only `DataInterface`).
-- **What that buys:** the compiler enforces the layering (the architecture tests then become a safety net), contracts can be versioned and released independently, and a concern can move behind its interface into a service of its own. The natural first candidates are the bank client, and the ledger with the audit trail and idempotency store, which have different scaling, availability and compliance needs from the request path (isolating card handling also narrows the PCI scope).
-- **What it costs:** more projects and references, network calls instead of method calls, and the loss of in-process atomicity. A payment, its ledger entry and its audit event would no longer be one in-memory step, so consistency would need an outbox or a saga, idempotent consumers, and versioned contracts.
-- **When:** it is not worth it for this exercise (two endpoints, one team, in-memory stores), which is why it is one project. It becomes worth it with several teams, different release cadences or scaling needs per concern, or contracts shared with other services. The folder rules keep the option open: the interface folders depend on no implementation, no layer reaches up, and the DTOs are not tied to the endpoints.
-
-**Rejected (for now).** Separate projects per layer, and microservices (stronger enforcement and independence but heavier: more project files, references and moving parts than this exercise warrants; the architecture tests give most of the benefit, and see "Possible evolution" above); a separate set of domain models duplicating the DTOs; leaving the layout flat (the status quo before this ADR).
-
----
-
-## ADR-28: Writing for the reviewer
-
-**Decision.** The repository is written to be read cold, quickly, by someone who did not build it (principles added 2026-11-16, also in `CLAUDE.md`):
-- The few files that implement the brief are small and flat, and the README lists them in reading order with their sizes.
-- Every top-level folder has a short `README.md` (what it is, what it may depend on, where to start), enforced by `FolderReadmeTests`; there is no unused code (a type or member is used, or is a labelled placeholder contract); folders are named by role, and what can be skipped is kept in clearly named folders.
-- What can be skipped is labelled as skippable; placeholders carry a `PLACEHOLDER` comment.
-- Every departure from, or interpretation of, the brief is in one README table with its reason.
-- Documentation is layered by reader (README, then ADRs, then the assistant's working rules) without repeating itself, and is updated in the same commit as the change it describes.
-- Claims are backed by tests where possible (the contract, architecture and naming tests), and names and comments say why, not what.
-
-**Why.** A reviewer has limited time and judges simplicity and judgement as much as correctness. The brief asks for code that is "simple and maintainable" and for key design considerations and assumptions to be documented; a repository that makes the important parts easy to find, and honest about what it adds, meets both. A stale or buried explanation costs more than a missing one.
-
-**Trade-off.** More documentation to keep true. The README table and reading guide are small, and the tests catch drift for the claims that matter.
-
-**Rejected.** A long README that repeats the ADRs; leaving departures from the brief to be discovered in code comments; relying on the reviewer to work out which files matter.
-
----
-
 ## Reference
 
 ### Project layout (ADR-1, ADR-27)
@@ -694,38 +742,6 @@ Start it with `docker-compose up -d` (simulator on :8080, Mountebank UI on :2525
 
 ### Security checklist (ADR-7, ADR-9)
 HTTPS redirection and HSTS; JWT bearer with scope policies; nothing sensitive persisted or logged; redacted `ToString()` on request types; global exception handler with no internals; bank token never forwarded. Per-merchant ownership checks (ADR-7), idempotency keys (ADR-21) and an append-only audit trail (ADR-22) are built. Out of scope (README "known gaps"): rate limiting, persistent encrypted storage, bank-side reversals (ADR-23).
-
-## ADR-11: Logging, correlation and request limits
-
-**Decision.**
-- Use **Serilog** (`Serilog.AspNetCore`) as the logging framework, plugged in behind the standard `ILogger<T>` abstraction. Application code depends only on `ILogger<T>`, never on Serilog types, so the framework is a composition-root choice that can be swapped without touching business code.
-- Serilog is configured from `appsettings` (`Serilog.Settings.Configuration`) with a console sink writing JSON (compact JSON formatter), set up in an `Add…` extension method (ADR-12). Enrich events with the request's trace id (verify the enrichment works when implementing).
-- Use structured message templates (named placeholders such as `{PaymentId}`, never string concatenation or interpolation), so each property is captured as a queryable field.
-- Sensitive data must never reach a log event: log scalar facts only (ids, status, outcome), never whole request objects; if an object is ever logged, a Serilog destructuring policy must exclude the card number and CVV (a backstop for the redacted `ToString()` rule in ADR-9).
-- Log only non-sensitive facts: payment id, resulting status, and the bank outcome (authorized / declined / bank error). Never log request bodies, the card number, CVV or tokens.
-- Use ASP.NET Core's default `traceId` (from `Activity` / `HttpContext.TraceIdentifier`) as the correlation id: it is attached to log scopes automatically and included in error (ProblemDetails) responses. No custom correlation middleware or `X-Correlation-Id` header.
-- Cap the request body size (Kestrel `MaxRequestBodySize`, a few KB: a payment request is a few hundred bytes). Oversized bodies get the framework's 413, which is outside the brief's `Rejected` rules and is documented as such.
-- Rate limiting is not built (documented gap; see below).
-
-**Why Serilog.**
-- It is the most popular dedicated structured logging framework in .NET (about 3.6 billion NuGet downloads; `Serilog.AspNetCore` about 869 million, against about 662 million for NLog, its nearest rival, and log4net as the older text-oriented option), so it is the library most .NET engineers and reviewers already know.
-- It is built around structured events: message-template properties become named fields, which is what makes payment logs searchable by payment id or status instead of grepped as text.
-- Enrichment attaches context (such as the trace id) to every event without repeating it at each call site.
-- Destructuring policies give a central place to stop sensitive properties being written, which suits a card-handling service (ADR-9) better than relying only on discipline at each call site.
-- Its sink ecosystem (console, file, Seq, Elasticsearch, Application Insights, OpenTelemetry) means that moving from the console sink here to a real log backend in production is a configuration change.
-- It plugs in behind `ILogger<T>`, so choosing it costs nothing in the business code and does not conflict with ADR-12 (we never wrap `ILogger`).
-
-**Trade-off.** Compared with the built-in providers alone it adds packages and some configuration, and with no log backend in this exercise its largest advantage (sinks) is not exercised; the structured-event model, enrichment and destructuring policies still apply. This was a deliberate choice for a production-style setup.
-
-**Alternatives considered.** The built-in `Microsoft.Extensions.Logging` providers alone (structured templates and a JSON console formatter, no extra dependency; simplest, and the fallback if the dependency is not wanted); NLog (mature and configurable, less common for new .NET work); log4net (older and mainly text-based, not chosen for new code).
-
-**Why the other decisions here.**
-- A payments service must be diagnosable without exposing card data. Structured logs keyed by payment id and status allow tracing a payment without ever recording sensitive fields, and the card-data rules in ADR-9 make the "what not to log" list explicit.
-- The framework already provides a per-request trace id, so a correlation id costs nothing; custom middleware would add code and a header contract the brief does not ask for (KISS).
-- A body-size limit is a one-line configuration that blocks trivially large payloads from an unauthenticated or abusive client; it is the cheapest of the abuse protections.
-- Rate limiting (`AddRateLimiter`) needs policy choices (per client, per scope, limits) that cannot be justified without real traffic, and the brief does not ask for it, so it stays a documented production gap rather than guessed-at code.
-
-**Rejected.** Custom correlation middleware / headers; request/response body logging (leaks card data); building rate limiting now.
 
 ---
 

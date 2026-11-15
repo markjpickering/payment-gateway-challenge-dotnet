@@ -109,7 +109,7 @@ payment endpoint requires a JWT bearer token with a scope: `payments:create` to 
 ## Design
 
 Reasoning for every decision, with the alternatives rejected, is in [`docs/architecture-decisions.md`](docs/architecture-decisions.md)
-(it starts with an index of the ones that matter). [`.claude/claude.md`](.claude/claude.md) holds the short working rules the
+(it starts with an index of the ones that matter, and is grouped by theme; [`docs/architecture-summary.md`](docs/architecture-summary.md) is a one-page digest). [`.claude/claude.md`](.claude/claude.md) holds the short working rules the
 code was written to; a reviewer can ignore it. In brief:
 
 - **Simple on purpose:** one project, five layers by folder, no Clean Architecture, CQRS or mediator. Expected failures
