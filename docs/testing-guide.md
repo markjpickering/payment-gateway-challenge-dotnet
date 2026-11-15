@@ -13,17 +13,12 @@ pwsh scripts/start.ps1
 
 It starts the bank simulator if Docker is installed (and warns if not), makes a development token, **copies it to your
 clipboard**, prints a ready-to-paste `curl` example and runs the API; Ctrl+C stops it. In the Scalar UI that opens, click
-**Authorize** and paste. Options: `-TokenOnly` (just the token and the example, no server), `-Merchant merchant-2`,
+**Authorize** only if it is empty. Options: `-TokenOnly` (just the token and the example, no server), `-Merchant merchant-2`,
 `-Scopes payments:read`, `-NoBrowser`.
 
-**In Visual Studio:** choose the **Get dev token** profile in the run dropdown (next to the green Start button) and press
-**Ctrl+F5**. It does **not** start the API; it only makes a token, and a console window explains what to do next:
-- **The token is on your clipboard** (just press Ctrl+V), and is also printed at the bottom of the console window if you need to copy it by hand. It lasts about 3 months.
-- Press Enter to close the window, switch the dropdown back to `PaymentGateway.Api` and press F5. The Scalar page opens: click **Authorize** and paste.
-- A `401` later means the token has expired: run the profile again.
-
-Visual Studio has no supported way to add a right-click command from a repository, so this is a run profile in `launchSettings.json`.
-If you prefer a menu entry, **Tools > External Tools > Add**: command `pwsh`, arguments `-NoProfile -File "$(SolutionDir)scripts\start.ps1" -TokenOnly -Pause`.
+**In Visual Studio:** run `pwsh scripts/dev-token.ps1` once (it creates the signing key in your user secrets; the Terminal
+window in Visual Studio will do), then just press **F5**. The Scalar page opens already signed in (see step 4). There is no
+separate profile for tokens: in a Debug build the page is pre-loaded with one.
 
 The rest of this guide is the same thing step by step.
 

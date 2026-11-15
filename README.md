@@ -14,11 +14,11 @@ command that does everything: it starts the bank simulator (if Docker is install
 runs the API and opens the docs. Ctrl+C stops it.
 
 ```bash
-pwsh scripts/start.ps1                  # then, in the Scalar UI that opens, click Authorize and paste (Ctrl+V)
+pwsh scripts/start.ps1                  # the Scalar UI opens already signed in (if Authorize is empty, paste with Ctrl+V)
 pwsh scripts/start.ps1 -TokenOnly       # or just make a token and print a curl example
 ```
 
-In Visual Studio, pick the **Get dev token** profile in the run dropdown and press Ctrl+F5: it makes a token, copies it to your clipboard and prints it (and the next steps) in a console window; then switch back to the `PaymentGateway.Api` profile, press F5 and paste the token into Scalar's Authorize box.
+In Visual Studio run `pwsh scripts/dev-token.ps1` once (it creates the signing key), then press F5: the Scalar page opens already signed in.
 Full walkthrough, expected results and troubleshooting: **[docs/testing-guide.md](docs/testing-guide.md)**. Or step by step:
 
 ```bash

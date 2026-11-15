@@ -8,8 +8,7 @@ param(
     [string[]]$Scopes = @('payments:create', 'payments:read'),
     [int]$Port = 7092,
     [switch]$TokenOnly,
-    [switch]$NoBrowser,
-    [switch]$Pause   # keep the window open at the end (used by the Visual Studio "Get dev token" launch profile)
+    [switch]$NoBrowser
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,37 +31,32 @@ function New-DevToken {
     $token
 }
 
-try {
-    if (-not $TokenOnly) { Start-BankSimulator }
-    $lines = @(New-DevToken)
-    $lines[0]
-    $token = $lines[-1]
+if (-not $TokenOnly) { Start-BankSimulator }
+$lines = @(New-DevToken)
+$lines[0]
+$token = $lines[-1]
 
-    $example = "curl -k -X POST $baseUrl/api/payments -H `"Authorization: Bearer <token>`" -H `"Content-Type: application/json`" " +
-               "-d '{`"cardNumber`":`"2222405343248877`",`"expiryMonth`":4,`"expiryYear`":2030,`"currency`":`"GBP`",`"amount`":100,`"cvv`":`"123`"}'"
+$example = "curl -k -X POST $baseUrl/api/payments -H `"Authorization: Bearer <token>`" -H `"Content-Type: application/json`" " +
+           "-d '{`"cardNumber`":`"2222405343248877`",`"expiryMonth`":4,`"expiryYear`":2030,`"currency`":`"GBP`",`"amount`":100,`"cvv`":`"123`"}'"
+''
+'Try it (a card ending in an odd digit is Authorized, even is Declined, 0 makes the bank fail):'
+"  $example"
+"  Scalar UI: $baseUrl/scalar/v1  (in a Debug build the page is already signed in; if Authorize is empty, paste the token)"
+''
+
+if ($TokenOnly) {
+    'YOUR TOKEN is below, and is already on your clipboard (press Ctrl+V to paste it). It lasts about 3 months.'
+    'This only made a token; it did not start the API. Next:'
+    '  1. Start the API (F5 in Visual Studio, or: dotnet run --project src/PaymentGateway.Api).'
+    '  2. The Scalar page that opens is already signed in (Debug build); if Authorize is empty, paste the token. For curl send: Authorization: Bearer <token>'
+    '  3. Send a POST /api/payments (see the curl example above). A 401 later means the token has expired: run this again.'
     ''
-    'Try it (a card ending in an odd digit is Authorized, even is Declined, 0 makes the bank fail):'
-    "  $example"
-    "  Scalar UI: $baseUrl/scalar/v1  (click Authorize and paste the token)"
-    ''
-
-    if ($TokenOnly) {
-        'YOUR TOKEN is below, and is already on your clipboard (press Ctrl+V to paste it). It lasts about 3 months.'
-        'This only made a token; it did not start the API. Next:'
-        '  1. Start the API: in Visual Studio pick the PaymentGateway.Api profile and press F5, or run: dotnet run --project src/PaymentGateway.Api'
-        '  2. In the Scalar page that opens, click Authorize and paste the token (or send it as: Authorization: Bearer <token>).'
-        '  3. Send a POST /api/payments (see the curl example above). A 401 later means the token has expired: run this again.'
-        ''
-        $token
-        return
-    }
-
-    'Starting the API. Your token is on your clipboard: when the Scalar page opens, click Authorize and press Ctrl+V. Ctrl+C here stops the API.'
-    if (-not $NoBrowser) { Start-Job { Start-Sleep 6; Start-Process "$using:baseUrl/scalar/v1" } | Out-Null }
-    $env:ASPNETCORE_ENVIRONMENT = 'Development'
-    if ($https) { dotnet run --project $project }
-    else { $env:ASPNETCORE_URLS = $baseUrl; dotnet run --no-launch-profile --project $project }
+    $token
+    return
 }
-finally {
-    if ($Pause) { Read-Host 'Press Enter to close' | Out-Null }
-}
+
+'Starting the API. The Scalar page that opens is already signed in (Debug build); if Authorize is empty, press Ctrl+V to paste the token (it is on your clipboard). Ctrl+C here stops the API.'
+if (-not $NoBrowser) { Start-Job { Start-Sleep 6; Start-Process "$using:baseUrl/scalar/v1" } | Out-Null }
+$env:ASPNETCORE_ENVIRONMENT = 'Development'
+if ($https) { dotnet run --project $project }
+else { $env:ASPNETCORE_URLS = $baseUrl; dotnet run --no-launch-profile --project $project }
