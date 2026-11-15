@@ -4,12 +4,18 @@ namespace PaymentGateway.Api.Documentation;
 
 public static class ApiDocumentationExtensions
 {
+    /// <summary>The OpenAPI document the Scalar page reads: the API's document plus sample values for "Test request".</summary>
+    public const string ScalarDocument = "scalar";
+
     /// <summary>
-    /// Registers the OpenAPI document generator (Microsoft's built-in one; ADR-5).
+    /// Registers the OpenAPI document generator (Microsoft's built-in one; ADR-5): the API's own document, <c>v1</c>, and a
+    /// second one for the Scalar page that adds the sample request values. The samples are a Scalar convenience, so they
+    /// are kept out of the API's own document.
     /// </summary>
     public static IServiceCollection AddApiDocumentation(this IServiceCollection services)
     {
-        services.AddOpenApi(options =>
+        services.AddOpenApi("v1", options => options.AddDocumentTransformer<BearerSecuritySchemeTransformer>());
+        services.AddOpenApi(ScalarDocument, options =>
         {
             options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
             options.AddSchemaTransformer<PaymentRequestExampleTransformer>();
@@ -29,7 +35,7 @@ public static class ApiDocumentationExtensions
         }
 
         app.MapOpenApi().AllowAnonymous();
-        app.MapScalarApiReference().AllowAnonymous();
+        app.MapScalarApiReference(options => options.WithOpenApiRoutePattern($"/openapi/{ScalarDocument}.json")).AllowAnonymous();
 
         return app;
     }
