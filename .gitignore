@@ -452,3 +452,8 @@ $RECYCLE.BIN/
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+# Claude Code local files
+.claude/settings.local.json
+.mcp.json
+.claude/vs-*.ps1
