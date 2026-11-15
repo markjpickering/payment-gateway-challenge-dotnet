@@ -11,6 +11,14 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{1EF69307-2
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaymentGateway.Api.Tests", "test\PaymentGateway.Api.Tests\PaymentGateway.Api.Tests.csproj", "{3A92D8D6-0359-4752-91AE-D8A59622518A}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{5D1A7C3E-8B24-4F6A-9E10-2C7B4A9D6E31}"
+	ProjectSection(SolutionItems) = preProject
+		docs\architecture-decisions.md = docs\architecture-decisions.md
+		docs\architecture-summary.md = docs\architecture-summary.md
+		docs\how-it-works.html = docs\how-it-works.html
+		docs\how-it-works.md = docs\how-it-works.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
