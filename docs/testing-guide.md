@@ -76,7 +76,7 @@ curl -k -X POST https://localhost:7092/api/payments \
 curl -k https://localhost:7092/api/payments/<id-from-the-response> -H "Authorization: Bearer $TOKEN"
 ```
 
-Or open **https://localhost:7092/scalar/v1**, click **Authorize**, paste the token, and use "Test request" on each endpoint.
+Or open **https://localhost:7092/scalar/v1**, click **Authorize**, paste the token, and use "Test request" on each endpoint. The `POST` body is **pre-filled with a valid payment** (a card ending in an odd digit, an expiry a few years ahead), so you can press Send straight away; change the card's last digit to see Declined (even) or a bank error (`0`).
 
 **Which card number gives which result** (the simulator looks at the last digit):
 

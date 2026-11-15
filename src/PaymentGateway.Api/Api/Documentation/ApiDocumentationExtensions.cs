@@ -9,7 +9,11 @@ public static class ApiDocumentationExtensions
     /// </summary>
     public static IServiceCollection AddApiDocumentation(this IServiceCollection services)
     {
-        services.AddOpenApi(options => options.AddDocumentTransformer<BearerSecuritySchemeTransformer>());
+        services.AddOpenApi(options =>
+        {
+            options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+            options.AddSchemaTransformer<PaymentRequestExampleTransformer>();
+        });
 
         return services;
     }
