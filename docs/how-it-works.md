@@ -1,6 +1,6 @@
 # How it works
 
-A short tour of the `lean` branch: what the software does, how a request moves through it, and how the classes fit
+A short tour of the software: what it does, how a request moves through it, and how the classes fit
 together. The diagrams are [Mermaid](https://mermaid.js.org/), which GitHub renders. For the reasoning behind each
 decision see [`architecture-decisions.md`](architecture-decisions.md). A standalone copy that opens in any browser (no GitHub needed) is `how-it-works.html` in this folder, generated from this file by `scripts/build-how-it-works-html.ps1`.
 
@@ -294,5 +294,5 @@ transport exceptions, and it turns each into a `BankError` result.
 
 ## What is not here
 
-Idempotency keys, an audit trail, reversals and real metrics are designed in the ADRs but not built on this branch (see
+Idempotency keys, an audit trail, reversals and real metrics are designed in the ADRs but NOT IMPLEMENTED (see
 [Beyond the brief](../README.md#beyond-the-brief)). Storage is in memory and is lost on restart.

@@ -7,7 +7,7 @@ alternatives rejected (ADR numbers below point into it). For how the code fits t
 **The rule that settles conflicts:** the brief asks for simple, maintainable code ("we do not want to encourage
 over-engineering"), so **KISS wins** over every other principle, and where this project differs from the brief it says so
 in the README's departures table. The deliberate additions are authentication and `amount > 0`. Idempotency, an audit
-trail, reversals and metrics are designed (ADR-15, 21, 22, 23) but are not built on this branch.
+trail, reversals and metrics are designed (ADR-15, 21, 22, 23) but are NOT IMPLEMENTED in this repository (metrics is a no-op seam only).
 
 ## Shape of the solution
 
@@ -65,5 +65,5 @@ trail, reversals and metrics are designed (ADR-15, 21, 22, 23) but are not built
 
 ## Known gaps (documented, not built)
 
-Rate limiting; persistent encrypted storage; idempotency, audit and reversals on this branch (without idempotency, a
+Rate limiting; persistent encrypted storage; idempotency, audit and reversals are NOT IMPLEMENTED (without idempotency, a
 client that retries a timed-out `POST` can take a payment twice); `AllowedHosts` is `*`.

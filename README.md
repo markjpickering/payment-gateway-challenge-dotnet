@@ -4,8 +4,8 @@ An API that lets a merchant take card payments: it validates the request, forwar
 (simulated) and stores the result so it can be retrieved later. Built for the Checkout.com payment gateway
 challenge on .NET 10 (ASP.NET Core Minimal APIs).
 
-> **This is the `lean` branch:** what the brief asks for, plus authentication and some hardening. Idempotency, an audit trail and
-> reversals are not built, and metrics is a no-op placeholder; see [Beyond the brief](#beyond-the-brief).
+> **What is built:** what the brief asks for, plus authentication and some hardening. **What is NOT implemented:** idempotency,
+> an audit trail and reversals (designed only), and real metrics (a no-op placeholder); see [Beyond the brief](#beyond-the-brief).
 
 ## Quick start
 
@@ -124,7 +124,7 @@ code was written to; a reviewer can ignore it. In brief:
 ## Beyond the brief
 
 A real payment gateway needs more than the brief describes. These concerns are **required for production** but are
-**not built on this branch**, so a reviewer does not have to read them. Each has a documented design
+**NOT IMPLEMENTED in this repository** (design only), so a reviewer does not have to read them. Each has a documented design
 ([`docs/architecture-decisions.md`](docs/architecture-decisions.md)); there is no interface or stub for them in the code,
 because nothing running would call it.
 
@@ -133,7 +133,7 @@ because nothing running would call it.
 | **Idempotency** | A merchant retrying a timed-out `POST` must not take the payment twice. An `Idempotency-Key` header makes a repeat replay the first response. | ADR-21 |
 | **Audit trail** | Disputes, fraud investigation and compliance need an append-only record of who did what, for which merchant, with what result (never card data). | ADR-22 |
 | **Reversals** | Money taken in error must be returned without editing history: a reversal is a new balancing ledger entry, once, in full. | ADR-23 |
-| **Metrics** | Operators watch payment, decline and bank-error rates and bank latency. | ADR-15 |
+| **Metrics** | Operators watch payment, decline and bank-error rates and bank latency. Only a no-op seam is built (below). | ADR-15 |
 
 Metrics is the one with a seam: the bank client already calls `IPaymentMetrics`, which is a **no-op placeholder**
 (`DataLayer/Placeholders/NoOpPaymentMetrics`, registered by `AddPaymentMetrics()`). A real implementation is a one-line change there.
@@ -154,7 +154,7 @@ Metrics is the one with a seam: the bank client already calls `IPaymentMetrics`,
 
 ## Known gaps
 
-- **The concerns under [Beyond the brief](#beyond-the-brief)** are not built. In particular, without idempotency a
+- **The concerns under [Beyond the brief](#beyond-the-brief)** are NOT implemented. In particular, without idempotency a
   client that retries a timed-out `POST` can take a payment twice.
 - **Everything is in memory** and lost on restart; a real store must also encrypt card-related data at rest.
 - **Single project on purpose.** For a larger system the contracts (`ApiInterface`, `DataInterface`) would be separated from the code that implements and consumes them, as projects and then possibly services; see ADR-27 ("Possible evolution").

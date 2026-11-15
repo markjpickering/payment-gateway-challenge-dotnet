@@ -1,8 +1,8 @@
 # Architecture Decisions
 
-Decisions made while planning the Payment Gateway challenge, with the reasoning and the alternatives rejected. Recorded 2026-11-14. **Status: decided and implemented** (see "Implementation status" at the end).
+Decisions made while planning the Payment Gateway challenge, with the reasoning and the alternatives rejected. Recorded 2026-11-14. **Status: decided. The core is implemented; the features marked NOT IMPLEMENTED (idempotency, audit trail, reversals and the real metrics) are designs only** (see "Implementation status" at the end).
 
-**Start here.** Most of the file is reference. The decisions that shape the code a reviewer reads are: ADR-1 (keep it simple, project layout), ADR-8 (validation), ADR-9 (the bank), ADR-17 (errors as values, no exceptions for flow control), ADR-26 (DTOs and entities are separate; storage holds no logic) and ADR-27 (the five layers and naming). ADR-7 is authentication. ADR-15, 21, 22 and 23 (metrics, idempotency, audit, reversals) describe the concerns that are placeholders on this branch. The rest is testing, tooling and conventions.
+**Start here.** Most of the file is reference. The decisions that shape the code a reviewer reads are: ADR-1 (keep it simple, project layout), ADR-8 (validation), ADR-9 (the bank), ADR-17 (errors as values, no exceptions for flow control), ADR-26 (DTOs and entities are separate; storage holds no logic) and ADR-27 (the five layers and naming). ADR-7 is authentication. ADR-15, 21, 22 and 23 (metrics, idempotency, audit, reversals) describe concerns that are NOT implemented in this repository (each carries a status banner). The rest is testing, tooling and conventions.
 
 **How this file is organised.** The decisions are grouped by theme, in the same order as [`architecture-summary.md`](architecture-summary.md) (a one-page digest of this file). Numbers are the order in which the decisions were made and are kept stable, because the code, the tests and `CLAUDE.md` refer to them, so within a theme they are not in numeric order.
 
@@ -194,6 +194,8 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 
 ## ADR-7: Authentication – JWT bearer with scope policies, dev tokens via `dotnet user-jwts`
 
+> **Status: IMPLEMENTED, except that the `payments:reverse` scope and the reversal endpoint it protects are NOT implemented (ADR-23), and the production design (identity provider, mTLS) is not built.**
+
 **Decision.** Protect the endpoints with `AddJwtBearer`:
 - `Authority` / `Audience` / issuer come from configuration (in production, the identity provider's metadata).
 - One authorisation policy per scope: `payments:create` (POST payment), `payments:read` (GET payment and transactions) and `payments:reverse` (POST reversal, ADR-23). No/invalid token -> 401; insufficient scope -> 403.
@@ -209,7 +211,7 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 - The brief does not require authentication, and a full identity provider would be far more than the exercise needs. `user-jwts` is the compromise: genuine validation in the code, but the reviewer can obtain a token with one command, with no custom issuing code.
 - Hand-rolling a token endpoint would look secure without being secure, and an on/off switch for authentication is the wrong thing to show in this domain.
 
-**Authentication, metrics (ADR-15), idempotency (ADR-21), auditing (ADR-22) and reversals (ADR-23) are the deliberate departures from the brief** (which asks for none of them); everywhere else the brief wins.
+**Authentication is built; metrics (ADR-15), idempotency (ADR-21), auditing (ADR-22) and reversals (ADR-23) are designed but NOT implemented. All five are deliberate departures from the brief** (which asks for none of them); everywhere else the brief wins.
 
 **Two identities per request: who originated it, and on whose behalf.** Every authenticated request carries both, taken from the validated token and never from the request body:
 - **Originator (`InitiatedBy`)**: the authenticated principal that made the call: the token's `sub` claim (a human user's id, or a machine client's id).
@@ -257,6 +259,8 @@ The brief asks for code that is "simple and maintainable. We do not want to enco
 ---
 
 ## ADR-15: Metrics with OpenTelemetry
+
+> **Status: PARTLY IMPLEMENTED. Only the seam is built: `IPaymentMetrics`, which the bank client calls, backed by the no-op placeholder `NoOpPaymentMetrics`. The meter, the instruments, the OpenTelemetry setup and the exporters below are a design only and are NOT implemented.**
 
 **Decision.** Metrics are a requirement. Use `System.Diagnostics.Metrics` to define the instruments and OpenTelemetry (metrics signal only) to collect and export them.
 - One `Meter`, named `PaymentGateway.Api`, wrapped in an `IPaymentMetrics` interface (in `DataInterface/`, ADR-13) implemented in `DataLayer/`, so services depend on the abstraction and tests can substitute it (ADR-6).
@@ -338,7 +342,7 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 
 **Rejected.** Storing the response DTO directly (what the first version did: simple, but couples the contract to storage); a repository method that takes a merchant id and filters (ownership inside storage); returning a response from the repository.
 
-**On the full implementation (`dev`).** The in-memory ledger, idempotency store and audit trail there were written before this rule: the ledger filters by merchant and the idempotency store applies the retention period. They would need the same change (ownership and expiry decided by the service or guard) to comply.
+**If the unbuilt stores were added.** The ledger, idempotency store and audit trail (ADR-21, 22, 23: NOT implemented) would have to follow this rule too: ownership and expiry decided by the service, not by the store.
 
 ---
 
@@ -441,6 +445,8 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 
 ## ADR-25: Service interfaces, decorators and validators
 
+> **Status: PARTLY IMPLEMENTED. `IPaymentService`, `ICallerIdentity` and the FluentValidation validator are built. The decorators (`IdempotentPaymentService`, `AuditedPaymentService`) and `IReversalService` are a design only and are NOT implemented.**
+
 **Decision.**
 - **Interfaces.** Besides the repository, bank client, mapping, metrics, idempotency, audit and ledger interfaces already named in earlier ADRs, add `IPaymentService` (validate, bank, store), `IReversalService` (the reversal flow and its invariants, ADR-23) and `ICallerIdentity` (gives `InitiatedBy` and `OnBehalfOf` from the validated token, ADR-7). All are in `BusinessLogic/Interfaces/` or `DataInterface/`, async where they do I/O (ADR-16).
 - **Decorators for cross-cutting behaviour.** Idempotency (ADR-21) and auditing (ADR-22) wrap the payment flow as decorators that implement the same interface and delegate to the inner one: `IdempotentPaymentService` and `AuditedPaymentService` around `PaymentService`, and the same for reversals. Audit is the outermost layer (so replays and conflicts are recorded), then idempotency, then the core service. The decorators are composed explicitly in an `Add…` extension method (ADR-12), without a decoration library. The Decorator pattern is named in a comment on each class (ADR-1).
@@ -506,7 +512,7 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 - GET: an existing payment (a POST-then-GET round trip returns the same data) and an unknown id (404).
 - Authentication: 401 with no or an invalid token and 403 with the wrong scope, on both endpoints.
 - Security: no response body contains the full card number or CVV.
-- Ownership, idempotency, reversals and audit: the required scenarios are listed in ADR-7, ADR-21, ADR-23 and ADR-22 respectively, and are part of the minimum suite.
+- Ownership: another merchant's payment gives 404 (ADR-7). Idempotency, reversals and audit (ADR-21, 23, 22) list required scenarios too, but those features are NOT implemented, so they have no tests.
 
 *Why.* Unit tests prove the pieces; only an integration test proves the wiring, JSON binding and mapping (including snake_case/camelCase and the `Rejected` behaviour for malformed input), authentication and authorisation policies, validation, and the HTTP status mapping working together, which is where most real defects in an API like this appear. The brief expects automated tests and leaves the type to us; for a two-endpoint service an end-to-end suite through the real pipeline gives the most confidence per test. Keeping them Docker-free (stubbed bank) makes them deterministic and runnable by any reviewer; contract checks against the real simulator are the separate, tagged `Simulator` tests.
 
@@ -623,15 +629,17 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 
 ## ADR-10: Source control workflow
 
-**Decision.** This is a solo exercise, so no feature/bugfix/hotfix branches. Work on `dev`; `main` stays the clean template. Make small, frequent commits (one logical step each, only when build and tests pass) using `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`). Tag checkpoints (`git tag checkpoint-N`) before risky changes, push `dev` to `origin` periodically as a backup, and squash-merge `dev` into `main` at the end (or keep the history if it tells a clear story; decide then).
+**Decision.** This is a solo exercise, so no feature/bugfix/hotfix branches. The work was done on a `dev` branch with small commits (one logical step each, only when build and tests pass) using `type: description` (`feat`, `fix`, `refactor`, `test`, `docs`), then a reduced copy, `lean`, was squashed into `main`. The repository now has one branch, `main`: the `dev` and `lean` branches were removed from `origin`, and the full implementation is not part of it.
 
 **Why.** Feature branches add ceremony without safety benefit for one person; small commits and tags give the same ability to roll back. Squashing gives the reviewer a tidy result.
 
 ---
 
-# Designed but not built on the `lean` branch
+# Designed but NOT IMPLEMENTED in this repository
 
 ## ADR-21: Idempotency keys
+
+> **Status: NOT IMPLEMENTED in this repository. This is a design only. There is no `Idempotency-Key` handling, no idempotency store and no replay protection.**
 
 **Decision.** State-changing requests are idempotent through an `Idempotency-Key` header.
 - **Where.** Optional on `POST /api/payments` and `POST /api/payments/{id}/reversals`. Without the header the request is processed normally and is not protected against replay; this keeps requests written to the brief working (revised: it was required at first, which made a plain `curl` from the brief fail). A key that is present but empty or over-long (more than 255 characters) is a 400. Reads (`GET`) need none.
@@ -662,6 +670,8 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 
 ## ADR-22: Auditing
 
+> **Status: NOT IMPLEMENTED in this repository. This is a design only. There is no audit trail.**
+
 **Decision.** Every security- and money-relevant action produces an immutable audit event in an append-only audit trail.
 - **Interface.** `IAuditTrail` offers `AppendAsync` and read access (`ReadAsync`, for tests and operators). There is deliberately **no update or delete**. Storage is in-memory and thread-safe in this exercise (ADR-3).
 - **Event.** `AuditEvent` is a record (ADR-20): event id, UTC timestamp (from `TimeProvider`), **originator** (`InitiatedBy`: the principal that made the call, from the token's `sub`), **on behalf of** (`OnBehalfOf`: the merchant account the operation is performed for, ADR-7), action, resource type and id, outcome, `traceId` (ADR-11), and the idempotency key when there is one. Both identities are always recorded, even when they are the same; for an unauthenticated request (401) both are empty. Identities come only from the validated token, never from the request body.
@@ -684,6 +694,8 @@ Entity types are named `[Thing]Entity` (`PaymentEntity`, `TransactionEntity`, `A
 ---
 
 ## ADR-23: Reversals as balancing transactions
+
+> **Status: NOT IMPLEMENTED in this repository. This is a design only. There are no reversal endpoints, no ledger and no `payments:reverse` scope.**
 
 **Decision.** A completed payment is never modified or deleted. Undoing it is a new, separate, immutable **balancing transaction** that offsets the original, so the history stays complete and the net effect is zero.
 - **Ledger.** `Transaction` is a record (ADR-20): id, payment id, `OnBehalfOf` merchant id, `InitiatedBy` originator (ADR-7), type (`Payment` | `Reversal`), signed amount in minor units, currency, UTC timestamp (from `TimeProvider`), the id of the transaction it reverses (for reversals) and the idempotency key. An authorized payment writes a `Payment` transaction of `+amount`; its reversal writes a `Reversal` transaction of `-amount` linked to it. The balance of a payment is the sum of its transactions: `amount` while outstanding, `0` once reversed. Declined and rejected payments move no money and write no transaction.
@@ -760,7 +772,7 @@ File-scoped namespaces; namespaces follow folders; primary constructors for DI; 
 
 ## Implementation status
 
-**On the `lean` branch** (made for review) the designs in ADR-15, ADR-21, ADR-22, ADR-23 and ADR-25 are documentation only: idempotency, the audit trail and reversals/ledger are not implemented there, and their interfaces were removed because nothing in the running code calls them. Metrics keeps its interface, `IPaymentMetrics`, because the bank client calls it; it is backed by a no-op placeholder (`NoOpPaymentMetrics`, registered by `AddPaymentMetrics()`). The full implementations and their tests are on `dev` (tag `full-implementation`); the checklist below describes `dev`. The checklist below tracks what was built. Verified: the full test suite passes with zero warnings (a handful of tests are the tagged `Simulator` ones, skipped without the simulator), `dotnet format --verify-no-changes` is clean, and the running app is smoke-tested over real Kestrel by `scripts/smoke-test.ps1` (401 without a token, 502 with the bank unreachable, 400 for an empty key and for malformed JSON, 413 for an oversized body, 404 for an unknown id). Later additions: HTTPS redirection plus HSTS outside Development (`UseTransportSecurity`), and an authorization fallback policy so any endpoint without its own requirement still needs a signed-in user (anonymous callers get 401 for unknown paths too).
+**What is implemented.** The brief's two endpoints, validation, the bank client, the in-memory repository, authentication with per-merchant ownership, logging, error handling, request limits and HSTS. **What is NOT implemented (design only):** idempotency (ADR-21), the audit trail (ADR-22), reversals and the ledger (ADR-23), the decorators and `IReversalService` (ADR-25) and the real metrics (ADR-15; only the `IPaymentMetrics` seam and its no-op placeholder exist). Their interfaces were removed because nothing in the running code calls them. In the checklist below `[x]` is built, `[~]` is partly built and `[ ]` is not built. Verified: the full test suite passes with zero warnings (a handful of tests are the tagged `Simulator` ones, skipped without the simulator), `dotnet format --verify-no-changes` is clean, and the running app is smoke-tested over real Kestrel by `scripts/smoke-test.ps1` (401 without a token, 502 with the bank unreachable, 400 for an empty key and for malformed JSON, 413 for an oversized body, 404 for an unknown id). Later additions: HTTPS redirection plus HSTS outside Development (`UseTransportSecurity`), and an authorization fallback policy so any endpoint without its own requirement still needs a signed-in user (anonymous callers get 401 for unknown paths too).
 
 - [x] Retarget both projects to `net10.0` and update test packages (done; later moved from xUnit 2.9.3 to xUnit v3 4.x, see ADR-6)
 - [x] Reorganise tests into `Unit/` and `Integration/` (done; `PaymentsControllerTests.cs` is now in `Integration/Payments/`; `TestSupport/` is created when the first shared helper is needed)
@@ -779,23 +791,23 @@ File-scoped namespaces; namespaces follow folders; primary constructors for DI; 
 - [x] Bank client and `Result<T>` per ADR-9/17: `IBankClient`/`BankClient` (typed `HttpClient`, options validated on start, every transport failure becomes a `BankError` result, caller cancellation propagates), `Result<T>`/`Error`/`ErrorKind`, `IMapping<,>` with the request-to-bank-request mapping; 27 unit tests
 - [x] `IPaymentService`/`PaymentService` per ADR-1/9/25: validate, bank, store; invalid requests never reach the bank or the store, bank errors are not stored; `ProcessedPaymentModel`, `PaymentEntity` and the two mappings between request, entity and response (last four digits only; see ADR-26); `Error.FieldErrors`; 20 unit tests (109 in total)
 - [x] Global exception handler per ADR-17: `UnhandledExceptionHandler` (generic 500 `ProblemDetails` with `traceId`, logged once) with integration tests
-- [x] Idempotency per ADR-21: optional `Idempotency-Key`; `IdempotentPaymentService` decorator composed in `AddPaymentPipeline`; `IIdempotencyStore` (in-memory, one lock for check-and-set, 24h retention via `TimeProvider`), keyed HMAC-SHA256 `IPaymentRequestFingerprinter` (random key at startup unless `Idempotency:FingerprintSecret` is set); replay with `Idempotent-Replayed: true`, 422 reused, 409 in progress, 400 invalid key; failures and exceptions release the key. A completely empty header value never reaches the app on the test server, so it is covered by unit tests and the Kestrel smoke test. Still open: the `idempotency.requests` metric (with metrics) and the reversal operation (with reversals)
-- [x] Audit trail per ADR-22: `IAuditTrail` (append and read only; in-memory, thread-safe, each event summarised in the log), `AuditEvent` record with both identities, `AuditedPaymentService` decorator (outermost; attempt written before the inner call; authorized/declined/rejected/bank error/replayed/conflict/retrieved), `AuditedAuthorizationResultHandler` decorator for 401/403 (identities empty for 401), trace id chosen like ProblemDetails'. Reversal events will be added with reversals
-- [x] Reversals per ADR-23: `Transaction` record and append-only `ITransactionLedger` (`InMemoryTransactionLedger`, one lock for the check-and-append), `LedgeredPaymentService` (authorized payments write a positive entry; sits below idempotency), `ReversalService` (own authorized payment, once, in full; payment status unchanged; no bank call), `POST /api/payments/{id}/reversals` (scope `payments:reverse`, 201) and `GET /api/payments/{id}/transactions` (scope `payments:read`, entries and balance), `IdempotentReversalService` and `AuditedReversalService` decorators over a shared `IdempotencyGuard` (the idempotency rules are written once), `payments.reversed` metric, `FailureResults.ToHttp` for the error mapping. Deviation from ADR-23: the transaction does not carry the idempotency key (the audit event does)
-- [x] Per-merchant ownership per ADR-7: `ICallerIdentity`/`CallerIdentity` (InitiatedBy = `sub`; OnBehalfOf = `merchant_id`, else `client_id`, else `azp`, else `sub`), payments stored per merchant, `IPaymentService.GetAsync` and `IPaymentsRepository` take the merchant, another merchant's payment is a 404. `MapInboundClaims = false` keeps the raw claim names (by default `sub` is renamed to a long URI and would never be found); policies require a `sub` claim. Reversals/transactions will reuse this when built
+- [ ] Idempotency per ADR-21: **NOT IMPLEMENTED** (design only: optional `Idempotency-Key`, keyed HMAC fingerprint, 24 h retention, replay and conflict responses)
+- [ ] Audit trail per ADR-22: **NOT IMPLEMENTED** (design only: append-only `IAuditTrail`, `AuditedPaymentService` decorator)
+- [ ] Reversals per ADR-23: **NOT IMPLEMENTED** (design only: balancing ledger transactions, `POST /api/payments/{id}/reversals`, `GET /api/payments/{id}/transactions`, `payments:reverse` scope)
+- [x] Per-merchant ownership per ADR-7: `ICallerIdentity`/`CallerIdentity` (InitiatedBy = `sub`; OnBehalfOf = `merchant_id`, else `client_id`, else `azp`, else `sub`), payments stored with their `MerchantId`, `PaymentService.GetAsync` compares it with the caller and another merchant's payment is a 404; `MapInboundClaims = false` so `sub` keeps its name
 - [x] Request validation per ADR-8/25: `PostPaymentRequestValidator` (FluentValidation 12.2.0, Apache-2.0) with injected `TimeProvider`, nullable numeric request fields, registered by assembly scanning in `AddPaymentServices()`; 59 unit tests under `Unit/Validation/PostPaymentRequestValidatorTests/` split by functional area, shared data in `TestSupport/`
-- [x] Service interfaces and decorators per ADR-25: `IPaymentService` = audit > idempotency > metrics > ledger > core; `IReversalService` = audit > idempotency > core; `ICallerIdentity`
+- [~] Service interfaces and decorators per ADR-25: `IPaymentService`, `ICallerIdentity` and the FluentValidation validator are built; the idempotency and audit decorators and `IReversalService` are **NOT IMPLEMENTED** (design only)
 - [x] Global usings per ADR-24: `Usings.cs` in both projects; the API project now has every namespace used by three or more files, and the per-file duplicates were removed
 - [x] Existing tests retrofitted to the Arrange-Act-Assert comment convention, with shared setup in constructors and class fixtures (ADR-6); follow it for all new tests
 - [x] ADR-19 followed (one type per file; test classes split by functional area, at most 10 tests each)
 - [x] ADR-18 (size limits) checked as each piece was written; `PaymentService` has eight constructor dependencies, an accepted exception for a DI constructor
-- [x] ADR-26: payments are stored as `PaymentEntity` (own entity, mappings `ProcessedPaymentModel` -> `PaymentEntity` -> response); `IPaymentsRepository` only adds and gets by id and has no merchant parameter; ownership is decided in `PaymentService.GetAsync`; `ITransactionLedger` lost its merchant parameter too. Not yet applied on `dev` to the ledger and idempotency store (see ADR-26)
-- [x] ADR-27: code organised into Api/ (endpoints + DTOs, security, error handling, docs), BusinessLogic/, DataInterface/ (ports, entities, enums, bank messages) and DataLayer/ (repository, bank client, metrics placeholder); entities renamed PaymentEntity / TransactionEntity / AuditEventEntity; Unit/Architecture/LayerDependencyTests (NetArchTest.Rules) enforces the dependency rules and the Entity suffix; tests moved to mirror the new folders. Result/Error/ErrorKind moved to Shared/Outcomes (no layer exception: Shared depends on nothing and every layer may use it); the project root namespace is PaymentGateway so layers are PaymentGateway.Api / .BusinessLogic / .DataInterface / .DataLayer / .Shared; the API DTOs have their own ApiInterface layer (ApiInterface/Dtos) and the bank messages are DataInterface/Dtos (each with Requests/ and Responses/ subfolders; NamingConventionTests checks every Request/Response type is in one) (DTOs are part of the interface they belong to), so BusinessLogic does not depend on Api at all Not applied to dev / full-implementation; NamespaceFolderTests enforces that every file's namespace equals the root namespace plus its folder path (src and test)
+- [x] ADR-26: payments are stored as `PaymentEntity` (own entity, mappings `ProcessedPaymentModel` -> `PaymentEntity` -> response); `IPaymentsRepository` only adds and gets by id and has no merchant parameter; ownership is decided in `PaymentService.GetAsync`
+- [x] ADR-27: code organised into Api/ (endpoints + DTOs, security, error handling, docs), BusinessLogic/, DataInterface/ (ports, entities, enums, bank messages) and DataLayer/ (repository, bank client, metrics placeholder); the entity is `PaymentEntity` (`TransactionEntity` and `AuditEventEntity` are part of the NOT IMPLEMENTED ledger and audit designs); Unit/Architecture/LayerDependencyTests (NetArchTest.Rules) enforces the dependency rules and the Entity suffix; tests moved to mirror the new folders. Result/Error/ErrorKind moved to Shared/Outcomes (no layer exception: Shared depends on nothing and every layer may use it); the project root namespace is PaymentGateway so layers are PaymentGateway.Api / .BusinessLogic / .DataInterface / .DataLayer / .Shared; the API DTOs have their own ApiInterface layer (ApiInterface/Dtos) and the bank messages are DataInterface/Dtos (each with Requests/ and Responses/ subfolders; NamingConventionTests checks every Request/Response type is in one) (DTOs are part of the interface they belong to), so BusinessLogic does not depend on Api at all Not applied to dev / full-implementation; NamespaceFolderTests enforces that every file's namespace equals the root namespace plus its folder path (src and test)
 - [x] ADR-28: README reading guide (five files, about 260 lines, plus what to skip), a single "Where this departs from, or interprets, the brief" table, a "start here" index at the top of this file, and the reviewer-readability principles in `CLAUDE.md`; a `README.md` in each layer folder and the test project (`FolderReadmeTests`); dead code removed (`AuditActions`), the two reversal-only `ErrorKind` members labelled
 - [x] API contract tests (`Integration/Contract/ApiContractTests`): exact JSON field names and status strings from the brief, using raw JSON; a changed property name fails them
 - [x] ADR-16 (async conventions) followed, including `Task<T>` on `IPaymentsRepository` and a cancellation token on every awaited call
-- [x] Metrics per ADR-15: `IPaymentMetrics`/`PaymentMetrics` (meter `PaymentGateway.Api`; `payments.processed`, `bank.requests`, `bank.request.duration`, `idempotency.requests`), recorded by `MeteredPaymentService` (below idempotency, so replays are not counted), `BankClient` (outcome and duration via `TimeProvider`) and `IdempotentPaymentService`; `AddTelemetry` wires OpenTelemetry metrics (ASP.NET Core and HttpClient instrumentation, console exporter, OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set). Still open: `payments.reversed` (with reversals). The integration tests substitute `IBankClient`, so `bank.requests` is covered by the `BankClient` unit tests
-- [x] Mapping classes per ADR-14: request-to-bank, payment-to-response, transaction-to-response, each with unit tests
+- [~] Metrics per ADR-15: only the seam is built (`IPaymentMetrics`, called by `BankClient`, backed by the no-op `NoOpPaymentMetrics`); the meter, instruments and OpenTelemetry exporters are **NOT IMPLEMENTED** (design only)
+- [x] Mapping classes per ADR-14: request-to-bank, processed-payment-to-entity and entity-to-response, each with unit tests
 - [x] ADR-13 followed: tests first for logic, interfaces for non-trivial classes, none for plain data
 - [x] DI wiring per ADR-12: registrations in one static `PaymentGatewayDi` class at the project root (`InitialiseDi` chaining `AddStructuredLogging`, `AddRequestLimits`, `AddPaymentMetrics`, `AddApiAuthentication`, `AddApiDocumentation`, `AddErrorHandling`, `AddPaymentServices`, `AddBankClient`), options validated on start, typed `HttpClient`
 - [x] Serilog (`Serilog.AspNetCore`) behind `ILogger<T>` via `AddStructuredLogging`, levels in `appsettings` (`Serilog` section), JSON console (`RenderedCompactJsonFormatter`), trace id in every event (`@tr`); `ReadFrom.Services` lets tests capture events with an `ILogEventSink`; `preserveStaticLogger: true` stops parallel hosts replacing the global logger. `PaymentService` logs payment id and status only; tests prove no card number or CVV reaches a log. Still open: traceId already in error responses (done); Kestrel request body size limit (deferred, ADR-11)
