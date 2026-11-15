@@ -7,32 +7,28 @@ challenge on .NET 10 (ASP.NET Core Minimal APIs).
 > **What is built:** what the brief asks for, plus authentication and some hardening. **What is NOT implemented:** idempotency,
 > an audit trail and reversals (designed only), and real metrics (a no-op placeholder); see [Beyond the brief](#beyond-the-brief).
 
-## Quick start
+## Take it for a spin
+
+**Every payment endpoint needs a bearer token, so get one first** (there is deliberately no switch to turn authentication off).
+The full walkthrough, with expected results and troubleshooting, is in **[docs/testing-guide.md](docs/testing-guide.md)**.
 
 ```bash
-docker-compose up -d                                # bank simulator on :8080 (UI on :2525)
-dotnet run --project src/PaymentGateway.Api         # https://localhost:7092, docs at /scalar/v1
-pwsh scripts/dev-token.ps1                          # prints a development bearer token
+docker-compose up -d                                # 1. bank simulator on :8080 (optional: without it a valid payment gives 502)
+TOKEN=$(pwsh scripts/dev-token.ps1)                 # 2. a development token (the first run creates the signing key in your user secrets)
+dotnet run --project src/PaymentGateway.Api         # 3. https://localhost:7092; Scalar UI at /scalar/v1 (Development only)
+
+curl -k -X POST https://localhost:7092/api/payments   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"   -d '{"cardNumber":"2222405343248877","expiryMonth":4,"expiryYear":2030,"currency":"GBP","amount":100,"cvv":"123"}'
+
+curl -k https://localhost:7092/api/payments/<id> -H "Authorization: Bearer $TOKEN"   # 4. read it back
 ```
 
-Every payment endpoint needs a bearer token (see [Authentication](#authentication)):
+A card number ending in an odd digit is `Authorized`, an even digit `Declined`, and `0` makes the bank answer `503` (we return `502`).
+In the Scalar UI click **Authorize** and paste the token. Variants: `pwsh scripts/dev-token.ps1 -Merchant merchant-2` (another
+merchant, so `404` on the first one's payments) and `-Scopes payments:read` (so `403` on `POST`).
 
-```bash
-TOKEN=$(pwsh scripts/dev-token.ps1)
-
-curl -k -X POST https://localhost:7092/api/payments \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"cardNumber":"2222405343248877","expiryMonth":4,"expiryYear":2030,"currency":"GBP","amount":100,"cvv":"123"}'
-
-curl -k https://localhost:7092/api/payments/<id> -H "Authorization: Bearer $TOKEN"
-```
-
-Interactive documentation (Scalar) is served at `/scalar/v1` in the Development environment only; use its
-Authorize box to paste the token.
-
-Run the tests with `dotnet test` (no Docker needed: the bank is substituted). With the simulator running,
-`dotnet test --filter-trait "Category=Simulator"` runs the tests against the real bank simulator.
-`pwsh scripts/smoke-test.ps1` starts the real app, checks a few requests against it and always stops it again.
+Run the tests with `dotnet test` (no Docker or token needed: the bank is substituted and the tests sign their own tokens).
+`dotnet test --filter-trait "Category=Simulator"` uses the real simulator, and `pwsh scripts/smoke-test.ps1` starts the real
+app, checks a few requests and always stops it again.
 
 ## Reading guide
 

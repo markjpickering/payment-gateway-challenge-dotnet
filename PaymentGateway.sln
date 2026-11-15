@@ -17,6 +17,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{5D1A7C3E-8
 		docs\architecture-summary.md = docs\architecture-summary.md
 		docs\how-it-works.html = docs\how-it-works.html
 		docs\how-it-works.md = docs\how-it-works.md
+		docs\testing-guide.md = docs\testing-guide.md
 	EndProjectSection
 EndProject
 Global
