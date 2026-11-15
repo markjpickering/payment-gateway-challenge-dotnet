@@ -188,7 +188,7 @@ pwsh scripts/build-how-it-works-html.ps1             # regenerate docs/how-it-wo
 
 ## Git (ADR-10)
 - The repository now has one branch, `main`; the earlier `dev` and `lean` branches were squashed into it and removed from `origin`. Small commits in `type: description` form (feat, fix, refactor, test, docs)
-- Commit only when build and tests pass; tag `checkpoint-N` before risky changes; never open PRs against `upstream` (`cko-recruitment`)
+- Commit only when build and tests pass;  never open PRs against `upstream` (`cko-recruitment`)
 
 <!-- GROUP 6. Designed but NOT IMPLEMENTED in this repository -->
 
