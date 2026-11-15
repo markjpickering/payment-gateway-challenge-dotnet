@@ -148,6 +148,9 @@ Metrics is the one with a seam: the bank client already calls `IPaymentMetrics`,
 | **Expiry** | A card is valid through the last day of its expiry month. | "In the future" is ambiguous for the current month; this is how card expiry works. |
 | **Currencies** | `USD`, `GBP`, `EUR` only. | The brief allows at most three. |
 | **Rejected** | HTTP `400` with `{ "status": "Rejected", "errors": [...] }`, including for malformed JSON. | The brief does not give a status code or a body for Rejected. |
+| **Field types and the request** | The request carries `cardNumber`; card number, CVV and `cardNumberLastFour` are strings, not ints. | The template's request had `CardNumberLastFour` and an int `Cvv`, but the brief validates a 14-19 digit card number and a CVV of 3-4 characters, and ints lose leading zeros. |
+| **Unknown payment id** | `GET /api/payments/{id}` returns `404`. | The template returned `200` with an empty body. |
+| **Template types** | One response type, `PostPaymentResponse`, serves POST and GET (the template's `GetPaymentResponse` was identical); the DTOs are records in `ApiInterface/`, and the repository is an async interface. | Tidier, and the layers need it. Code written against the template's namespaces or `PaymentsRepository` class would not compile. |
 | **Idempotency, audit trail, reversals, metrics** | Not built (designed in the ADRs); metrics is a no-op placeholder. | Needed in production, not asked for. See [Beyond the brief](#beyond-the-brief). |
 
 **Bank simulator:** a card number ending in an odd digit is authorized, an even digit is declined, and `0` makes it answer `503`.
